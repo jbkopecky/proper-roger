@@ -1,0 +1,269 @@
+# proper-roger: CW ragchew corpus and default settings.
+#
+# This is ordinary YAML, but pr.py reads it with a tiny built-in parser that
+# understands only this subset:
+#   - nested "key: value" mappings (indent with spaces, never tabs)
+#   - "- item" lists and [a, b, c] flow lists of scalars
+#   - plain, 'single-quoted' or "double-quoted" scalars, comments with #
+# No anchors, multi-line strings, {flow mappings} or lists of mappings.
+#
+# Templates may only use characters pr.py can send in Morse:
+# letters, digits, space and . , ? / = + - @   (case does not matter).
+
+# --------------------------------------------------------------------------
+# Defaults for the command line (every option can still be overridden).
+# --------------------------------------------------------------------------
+defaults:
+  wpm: 18
+  farnsworth: null      # null = same as wpm, i.e. no Farnsworth spacing
+  difficulty: 2         # 1-5, language complexity, independent from speed
+  mode: mixed           # blocks | phrases | mixed
+  tone: 650             # sidetone in Hz
+  volume: 0.5           # 0.0 - 1.0
+  # player: "ffplay -nodisp -autoexit -loglevel quiet"   # force a player command
+
+# --------------------------------------------------------------------------
+# Vocabulary. {name}, {qth}, ... in a template pick one entry at random.
+#   {name} {name}   -> the same value twice (NAME HANS HANS), as operators do
+#   {rig} ... {rig2} -> two different values from the same list
+# --------------------------------------------------------------------------
+vocab:
+  name: [HANS, PETER, DIETER, KARL, JOHN, MARCO, PAUL, JEAN, PIERRE, LUC,
+         TOM, BOB, DAVE, MIKE, STEVE, JIM, BILL, RON, ANDY, ERIK, LARS,
+         SVEN, JAN, PIET, PAOLO, LUIGI, PEDRO, JOSE, TONY, FRED]
+
+  qth: [BERLIN, HAMBURG, BONN, MUNICH, PARIS, LYON, BRUSSELS, PRAGUE, VIENNA,
+        ZURICH, MILAN, ROME, MADRID, LISBON, OSLO, STOCKHOLM, HELSINKI,
+        COPENHAGEN, DUBLIN, LONDON, BRISTOL, LEEDS, WARSAW, KRAKOW, BUDAPEST,
+        GENT, UTRECHT, NANTES, TOULOUSE, BORDEAUX, DIJON, LILLE, GRENOBLE]
+
+  rig: [K1, K2, K3, KX1, KX2, KX3, KH1, QCX, QMX, IC7300, IC705, FT817,
+        FT818, FT891, TS590, TR35, MTR3B, SW3B, G90]
+
+  antenna: [DIPOLE, EFHW, VERTICAL, LOOP, RANDOM WIRE, INV V, G5RV, DOUBLET,
+            GP, WINDOM, MAG LOOP, HEX BEAM]
+
+  power: [1W, 3W, 5W, 10W, 20W, 50W, 100W]
+
+  weather: [SUNNY, CLOUDY, RAIN, WINDY, FOG, OVERCAST, DRIZZLE, SNOW, CLEAR]
+
+  band: [80M, 40M, 30M, 20M, 17M, 15M]
+
+  rst: [559, 569, 579, 589, 599, 449, 459, 339]
+
+  key: [STRAIGHT KEY, PADDLE, BUG, COOTIE, IAMBIC PADDLE]
+
+  job: [TEACHER, ENGINEER, NURSE, FARMER, PILOT, ELECTRICIAN, DOCTOR,
+        MECHANIC, PROGRAMMER, SAILOR]
+
+  hobby: [HIKING, CYCLING, FISHING, GARDENING, SAILING, CHESS, SKIING, RUNNING]
+
+  # "JUST CAME BACK FROM {activity}"
+  activity: [A WALK WITH THE DOG, WORK, THE GARDEN, A POTA ACTIVATION,
+             A SOTA HIKE, THE RADIO CLUB, SHOPPING, FISHING, A BIKE RIDE,
+             THE BEACH, HOLIDAY]
+
+  # past moments: "WORKED {qth} {when}"
+  when: [YESTERDAY, LAST NIGHT, LAST WEEKEND, THIS MORNING, LAST WEEK]
+
+# --------------------------------------------------------------------------
+# Integer ranges: {temp} picks a whole number between low and high.
+# --------------------------------------------------------------------------
+ranges:
+  temp: [8, 24]           # generic temperature in C
+  temp_low: [-8, 7]       # used with "COLD"
+  temp_high: [23, 35]     # used with "WARM" / "HOT"
+  height: [5, 15]         # antenna height in metres
+  years: [2, 55]          # years as a ham, years retired...
+  year: [1968, 2022]      # a year in the past
+  age: [19, 84]
+  licence_age: [14, 45]   # age when licensed
+
+# --------------------------------------------------------------------------
+# Blocks: short reusable chunks, to be heard as one unit.
+# --------------------------------------------------------------------------
+blocks:
+  1:
+    - "NAME {name}"
+    - "QTH {qth}"
+    - "RIG {rig}"
+    - "PWR {power}"
+    - "ANT {antenna}"
+    - "UR RST {rst}"
+    - "WX {weather}"
+    - "TEMP {temp}C"
+    - "GM OM"
+    - "GE OM"
+    - "TNX FER CALL"
+    - "73 OM"
+    - "HW CPY"
+    - "FB"
+    - "R R"
+    - "TU"
+
+  2:
+    - "NAME HR {name}"
+    - "QTH HR {qth}"
+    - "RIG HR {rig}"
+    - "ANT HR {antenna}"
+    - "PWR HR {power}"
+    - "TNX FER RPRT"
+    - "UR SIG FB"
+    - "HW CPY NW"
+    - "BK TO U"
+    - "SOLID CPY"
+    - "FB SIG OM"
+    - "WX HR {weather}"
+    - "PSE QSL"
+    - "QSL VIA BURO"
+    - "MNI TNX"
+    - "HPE CUAGN"
+    - "GL ES 73"
+    - "DR OM"
+    - "ON {band} TODAY"
+
+  3:
+    - "BEEN HAM FER {years} YRS"
+    - "USUALLY RUN QRP"
+    - "RUNNING {power} HR"
+    - "CPY U SOLID"
+    - "SUM QSB ON UR SIG"
+    - "UR SIG {rst} HR"
+    - "AGE HR {age}"
+    - "NAME AGN {name}"
+    - "WORK AS {job}"
+    - "RETIRED NW"
+    - "FIRST QSO TODAY"
+    - "ANT UP {height}M"
+    - "RIG IS HOMEBREW"
+    - "USING {key} HR"
+    - "CONDX FB TODAY"
+    - "BAND NOISY HR"
+    - "QRM HR SRI"
+    - "PSE RPT UR NAME"
+    - "MISSED UR QTH"
+    - "NR {qth}"
+
+  4:
+    - "SRI FER SLOW CW HI"
+    - "ANT IS ONLY A {antenna}"
+    - "BACK FROM {activity} NW"
+    - "MY OLD {rig} STILL WORKS FB"
+    - "WX TURNING TO {weather} NW"
+    - "WILL QRT SOON FER DINNER"
+    - "XYL CALLING FER LUNCH HI"
+    - "TIME TO WALK THE DOG"
+    - "OP HR IS {name} AGN"
+    - "HPE TO CUAGN ON {band}"
+    - "NOT MUCH DX WITH {power} HI"
+    - "PSE QRS A BIT"
+    - "U ARE MY FIRST QSO ON {band}"
+    - "STILL LEARNING CW"
+
+  5:
+    - "BEEN OFF THE AIR FER {years} YRS BUT BACK NW"
+    - "STILL LEARNING CW SO PSE QRS"
+    - "GOING QRT IN A FEW MINS"
+    - "THE {antenna} IS IN THE ATTIC HI HI"
+    - "XYL NOT A HAM BUT VY PATIENT HI"
+    - "KEY HR IS AN OLD {key} FROM {year}"
+    - "CPY ABT 80 PCT QSB HR"
+    - "SRI QRM HR PSE RPT ALL"
+    - "WORKED {qth} {when} ON {band}"
+    - "HAVE {rig} ES {rig2} HR"
+    - "AGN AGN NAME IS {name} {name}"
+    - "NOT MUCH TIME FER RADIO SINCE {year} HI"
+
+# --------------------------------------------------------------------------
+# Phrases: longer fragments resembling a real ragchew.
+# --------------------------------------------------------------------------
+phrases:
+  1:
+    - "NAME {name} {name}"
+    - "QTH {qth} {qth}"
+    - "UR RST {rst} {rst}"
+    - "RIG {rig} {rig}"
+    - "PWR {power} {power}"
+    - "ANT {antenna} {antenna}"
+    - "WX {weather} {weather}"
+    - "TEMP {temp}C {temp}C"
+    - "R R TNX FER CALL"
+    - "GM ES TNX FER CALL"
+    - "NAME IS {name}"
+    - "MY QTH IS {qth}"
+
+  2:
+    - "NAME {name} QTH {qth}"
+    - "NAME {name} {name} QTH {qth} {qth}"
+    - "RIG HR {rig} PWR {power}"
+    - "ANT {antenna} UP {height}M"
+    - "WX {weather} TEMP {temp}C"
+    - "UR RST {rst} {rst} NAME {name}"
+    - "RIG {rig} ANT {antenna}"
+    - "TNX FER CALL UR RST {rst}"
+    - "QTH {qth} RIG {rig}"
+    - "PWR {power} ANT {antenna}"
+    - "WX COLD TEMP {temp_low}C"
+    - "WX WARM TEMP {temp_high}C"
+    - "HW CPY BK TO U"
+    - "GE OM TNX FER CALL UR RST {rst}"
+    - "ANT HR {antenna} PWR {power}"
+
+  3:
+    - "BEEN HAM FER {years} YRS"
+    - "USUALLY RUN QRP FROM PARKS"
+    - "TODAY USING MY OLD {rig}"
+    - "UR SIG FB WITH SOME QSB"
+    - "RIG HR {rig} PWR {power} ANT {antenna}"
+    - "WX {weather} HR TODAY"
+    - "WX COLD TODAY BUT SUNNY"
+    - "AGE HR {age} AND RETIRED"
+    - "WORK AS {job} IN {qth}"
+    - "DO U OPERATE PORTABLE OFTEN"
+    - "FIRST TIME ON {band} TODAY"
+    - "USING {key} FER THIS QSO"
+    - "ANT IS {antenna} UP {height}M IN THE GARDEN"
+    - "NAME HR IS {name} AND QTH IS {qth}"
+    - "UR {rig} SOUNDS FB TODAY"
+    - "BAND IS NOISY BUT I CPY U OK"
+    - "TNX FER THE {rst} RPRT"
+    - "RUNNING {power} TO A {antenna}"
+    - "HW IS THE WX IN {qth}"
+
+  4:
+    - "WX WAS RAIN THIS MORNING BUT SUNNY NOW"
+    - "USUALLY USE {rig2} BUT TODAY USING MY OLD {rig}"
+    - "JUST CAME BACK FROM {activity} HI"
+    - "UR {rig} SOUNDS FB EVEN AT {power}"
+    - "BEEN HAM FER {years} YRS AND STILL LOVE CW"
+    - "MY {antenna} IS ONLY UP {height}M SO NOT MUCH DX HI"
+    - "HAD SOME RAIN {when} BUT SUNNY NW"
+    - "I AM {age} YRS OLD AND RETIRED {job}"
+    - "WE HAVE A SMALL DOG AND HE HATES THE KEY HI"
+    - "HPE TO WORK U AGN ON {band} SOME DAY"
+    - "MOSTLY OPERATE POTA FROM PARKS NEAR {qth}"
+    - "TEMP HR ONLY {temp_low}C SO FINGERS COLD HI"
+    - "TEMP {temp_high}C HR TODAY TOO HOT FER RADIO HI"
+    - "WORKED {qth} {when} WITH ONLY {power}"
+    - "I LIKE {hobby} WHEN NOT ON THE RADIO"
+    - "ANT IS {antenna} BUT XYL WANTS IT DOWN HI"
+    - "NAME AGN IS {name} AND I LIVE NEAR {qth}"
+
+  5:
+    - "BEEN HAM SINCE {year} BUT ONLY STARTED CW AGAIN LAST YR"
+    - "TODAY RUNNING OLD {rig} AT {power} INTO {antenna} HI HI"
+    - "MY XYL SAYS ANT IS TOO BIG HI"
+    - "DO U ALWAYS OPERATE POTA QRP OR ALSO FROM HOME"
+    - "SRI MISSED UR NAME QRM HR PSE RPT"
+    - "NAME AGN {name} {name} ES QTH {qth} NR {qth2}"
+    - "GOT MY LICENCE IN {year} WHEN I WAS {licence_age} YRS OLD"
+    - "FIRST RIG WAS A HOMEBREW BUT NW USING {rig}"
+    - "WX HR {weather} ES {temp_low}C SO SNOW POSSIBLE TOMORROW"
+    - "USED TO WORK AS {job} BUT RETIRED FER {years} YRS NW"
+    - "WILL QRT SOON XYL CALLING FER DINNER HI HI 73"
+    - "BAND WAS DEAD {when} BUT UR SIG IS {rst} NW"
+    - "HAVE {rig} ES {rig2} BUT THE OLD {rig} IS MY FAVORITE"
+    - "TRIED {hobby} {when} BUT WX WAS {weather} SO BACK TO RADIO HI"
+    - "PSE QRS A BIT STILL LEARNING ES CPY ABT 80 PCT"
+    - "CONDX UP AND DOWN ALL DAY BUT U ARE {rst} NW SOLID"
+    - "MY {antenna} CAME DOWN IN THE STORM {when} SO USING A {antenna2} NW"
