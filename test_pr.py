@@ -464,13 +464,13 @@ class TransmitterTests(unittest.TestCase):
         self.assertEqual(tx.speeds(20, 20)[0], tx.speeds(20, 20)[1])
 
     def test_no_vary_sends_exactly_the_requested_speed(self):
-        tx = pr.Transmitter(pr.settings_from_argv(["-w", "20"]))
+        tx = pr.Transmitter(pr.settings_from_argv(["-w", "20", "--vary", "0"]))
         tx.new_station()
         self.assertEqual(tx.speeds(20, 20), (20, 20))
         self.assertEqual(tx.speeds(5, 5), (5, 5))
 
     def test_slow_render_is_longer_with_same_elements(self):
-        tx = pr.Transmitter(pr.settings_from_argv(["-w", "20"]))
+        tx = pr.Transmitter(pr.settings_from_argv(["-w", "20", "--clean"]))
         normal, _ = tx.render("TNX FER CALL", 20, 20)
         slow, starts = tx.render("TNX FER CALL", 20, 20, slow=True)
         self.assertGreater(len(slow), len(normal))
@@ -486,11 +486,19 @@ class CLITests(unittest.TestCase):
     def test_defaults(self):
         s = pr.settings_from_argv([])
         self.assertEqual((s.wpm, s.farnsworth, s.difficulty, s.mode), (18, 18, 2, "mixed"))
-        self.assertEqual((s.tone, s.volume, s.count, s.show_text), (650, 0.5, None, False))
+        self.assertEqual((s.tone, s.volume, s.count, s.show_text), (600, 0.5, None, False))
         self.assertFalse(s.no_play)
         self.assertEqual(s.station, 8)
+        # a calm, real band by default
+        self.assertEqual(s.conditions, pr.Conditions(fist=5, qsb=0.2, noise=0.15, qrm=0.0))
+        self.assertEqual((s.vary, s.export), (1, None))
+
+    def test_clean_turns_every_condition_off(self):
+        s = pr.settings_from_argv(["--clean"])
         self.assertEqual(s.conditions, pr.Conditions())
-        self.assertEqual((s.vary, s.export), (0, None))
+        self.assertEqual(s.vary, 0)
+        s = pr.settings_from_argv(["--clean", "--qrm", "0.5", "-w", "25"], {"noise": 0.4})
+        self.assertEqual((s.conditions, s.vary, s.wpm), (pr.Conditions(), 0, 25))
 
     def test_band_condition_options(self):
         s = pr.settings_from_argv(["--fist", "10", "--vary", "2", "--qsb", "0.5",
@@ -825,7 +833,8 @@ class SessionTests(unittest.TestCase):
         self.assertNotIn("new station", out)
 
     def test_header_and_reveal_show_conditions(self):
-        s = self.make_session(["-w", "20", "--vary", "3", "--qsb", "0.5", "--fist", "10"])
+        s = self.make_session(["-w", "20", "--vary", "3", "--qsb", "0.5", "--fist", "10",
+                               "--noise", "0"])
         header = s.header()
         for part in ("fist 10%", f"vary {s.ui.sym['pm']}3", "QSB 0.5"):
             self.assertIn(part, header)
@@ -836,7 +845,7 @@ class SessionTests(unittest.TestCase):
         s.start("TNX FER CALL")
         wpm = s.tx.speeds(20, 20)[0]
         self.assertEqual(s.reveal_text(), f"TNX FER CALL   ({wpm} WPM)")
-        self.assertEqual(self.make_session([]).reveal_text(), "")
+        self.assertEqual(self.make_session(["--clean"]).reveal_text(), "")
 
 
 class ExportTests(unittest.TestCase):

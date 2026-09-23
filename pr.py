@@ -47,14 +47,15 @@ BUILTIN_DEFAULTS = {
     "farnsworth": None,  # None = same as wpm
     "difficulty": 2,
     "mode": "mixed",
-    "tone": 650,
+    "tone": 600,
     "volume": 0.5,
     "player": None,
     "station": 8,        # phrases from one station before the next, 0 = none
-    "fist": 0,           # band conditions, all off by default
-    "vary": 0,
-    "qsb": 0.0,
-    "noise": 0.0,
+    # Band conditions: a calm, real band by default (--clean turns them off).
+    "fist": 5,           # a discreet human hand
+    "vary": 1,           # each station a little faster or slower, a little off
+    "qsb": 0.2,          # slow, gentle fading
+    "noise": 0.15,       # the soft rush of a quiet band
     "qrm": 0.0,
     "filter": 400,       # receiver CW filter, Hz
     "shape": "soft",     # receiver filter shape: soft | sharp
@@ -198,7 +199,7 @@ TAIL_SECONDS = 0.20
 
 @dataclass(frozen=True)
 class Conditions:
-    """Band conditions applied to a rendered phrase; all off by default."""
+    """Band conditions applied to a rendered phrase; all off unless given."""
     fist: int = 0        # human timing variation, % of each element and gap (0-50)
     qsb: float = 0.0     # fading depth, 0-1
     noise: float = 0.0   # band noise level, 0-1 (see NOISE_GAIN)
@@ -1045,7 +1046,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="language difficulty, independent from speed (default 2)")
     p.add_argument("-m", "--mode", choices=MODES,
                    help="blocks = short chunks, phrases = longer sentences (default mixed)")
-    p.add_argument("--tone", type=int, metavar="HZ", help="sidetone frequency (default 650)")
+    p.add_argument("--tone", type=int, metavar="HZ",
+                   help="sidetone / receive pitch (default 600)")
     p.add_argument("--volume", type=float, metavar="0-1", help="playback volume (default 0.5)")
     p.add_argument("-c", "--count", type=int, metavar="N",
                    help="number of exercises (default: endless, quit with q)")
@@ -1056,17 +1058,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--station", type=int, metavar="N",
                    help="phrases from the same station (name, QTH, rig...) before a new "
                         "one (default 8, 0 = new values every phrase)")
-    g = p.add_argument_group("band conditions (all off by default)")
+    g = p.add_argument_group("band conditions (default: a calm band, see --clean)")
+    g.add_argument("--clean", action="store_true",
+                   help="perfect keyer on a silent band: no fist, vary, QSB, noise or QRM")
     g.add_argument("--fist", type=int, metavar="PCT",
-                   help=f"human timing variation, %% of each element (0-{FIST_MAX}, try 10)")
+                   help=f"human timing variation, %% of each element (0-{FIST_MAX}, default 5)")
     g.add_argument("--vary", type=int, metavar="WPM",
                    help=f"each station sends up to +/- WPM off --wpm, with its own tone "
-                        f"(0-{VARY_MAX}, try 2)")
-    g.add_argument("--qsb", type=float, metavar="0-1", help="fading depth (try 0.5)")
+                        f"(0-{VARY_MAX}, default 1)")
+    g.add_argument("--qsb", type=float, metavar="0-1", help="fading depth (default 0.2)")
     g.add_argument("--noise", type=float, metavar="0-1",
-                   help="background noise relative to the signal (try 0.3)")
+                   help="band noise (default 0.15; 0.3 busy, 0.5 noisy)")
     g.add_argument("--qrm", type=float, metavar="0-1",
-                   help="level of another station calling CQ nearby (try 0.3)")
+                   help="level of another station calling CQ nearby (default 0, try 0.3)")
     g.add_argument("--filter", type=int, metavar="HZ",
                    help=f"receiver CW filter bandwidth with --noise or --qrm "
                         f"({FILTER_MIN}-{FILTER_MAX}, default 400; try 250 or 500)")
@@ -1135,6 +1139,9 @@ def resolve_settings(args: argparse.Namespace, defaults: dict | None = None) -> 
     qsb = pick("qsb", float, args.qsb)
     noise = pick("noise", float, args.noise)
     qrm = pick("qrm", float, args.qrm)
+    if args.clean:
+        fist = vary = 0
+        qsb = noise = qrm = 0.0
     rx_filter_hz = pick("filter", int, args.filter)
     shape = pick("shape", str, args.shape)
 

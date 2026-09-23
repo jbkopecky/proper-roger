@@ -16,15 +16,16 @@ wpm = 18
 # farnsworth = 15       # effective speed; leave out for none (same as wpm)
 difficulty = 2          # 1-5, language complexity, independent from speed
 mode = "mixed"          # "blocks" | "phrases" | "mixed"
-tone = 650              # sidetone in Hz
+tone = 600              # sidetone / receive pitch in Hz
 volume = 0.5            # 0.0 - 1.0
 station = 8             # phrases from the same station before a new one, 0 = no station
-# Band conditions, all off by default: comprehension comes first.
-fist = 0                # human timing variation, % of each element (0-50)
-vary = 0                # each station sends up to +/- this many WPM off --wpm (0-10)
-qsb = 0.0               # fading depth 0.0 - 1.0
-noise = 0.0             # band noise 0.0 - 1.0 (0.2 quiet band, 0.4 busy)
-qrm = 0.0               # level of an interfering station, 0.0 - 1.0
+# Band conditions: a calm, real band. `--clean` on the command line turns
+# them all off for a perfect keyer on a silent band.
+fist = 5                # human timing variation, % of each element (0-50)
+vary = 1                # each station sends up to +/- this many WPM off --wpm (0-10)
+qsb = 0.2               # fading depth 0.0 - 1.0
+noise = 0.15            # band noise 0.0 - 1.0 (0.15 calm, 0.3 busy, 0.5 noisy)
+qrm = 0.0               # a station calling CQ nearby, 0.0 - 1.0 (try 0.3)
 filter = 400            # receiver CW filter in Hz (100-1000), used with noise or qrm
 shape = "soft"          # filter shape: "soft" (round, no ringing) | "sharp" (steep, rings)
 # player = "ffplay -nodisp -autoexit -loglevel quiet"   # force a player command

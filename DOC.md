@@ -14,8 +14,10 @@ is the *CW Ragchew RX Trainer* spec this MVP was written from.
   with any Python 3.11+ on macOS, Linux and Windows.
 - **Small.** No terminal UI framework, no plugin system, no generic
   abstractions. Roughly 1400 lines including docstrings.
-- **Clean by default.** Band conditions (fist, fading, noise, QRM) exist but
-  are all off unless asked for: comprehension comes first.
+- **Real but peaceful by default.** Out of the box you hear a calm band: a
+  discreet human fist (5 %), stations +/- 1 WPM apart, gentle fading (0.2)
+  and a soft noise floor (0.15) through a 400 Hz soft filter, at a 600 Hz
+  pitch, with no QRM. `--clean` gives the perfect keyer on a silent band.
 
 The stdlib-only constraint drove these design decisions, each of which would
 usually be solved by a dependency:

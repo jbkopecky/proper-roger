@@ -70,7 +70,8 @@ on Windows. You can also pass any other command with `--player "cmd"`.
 
 | you want...                               | try                                                        |
 |-------------------------------------------|------------------------------------------------------------|
-| to get started gently                     | `python3 pr.py -d 1 -m blocks -w 20 -f 12`                 |
+| to get started gently, on a calm band      | `python3 pr.py -d 1 -m blocks -w 20 -f 12`                 |
+| a perfect keyer on a silent band          | `python3 pr.py --clean`                                    |
 | real sentences, comfortable spacing       | `python3 pr.py -d 3 -w 20 -f 15`                           |
 | fast but predictable chunks               | `python3 pr.py -d 1 -m blocks -w 28`                       |
 | the feel of a real QSO                    | `python3 pr.py -d 3 --fist 10 --vary 2 --qsb 0.4`          |
@@ -145,8 +146,12 @@ and pitch, and the revealed text tells you what was actually sent:
 
 ## Band conditions
 
-Clean, machine-perfect CW is the default: comprehension comes first. When it
-gets easy, add some reality one knob at a time:
+Out of the box you hear a **calm, real band**: a discreet human fist
+(`--fist 5`), stations a little faster or slower than each other
+(`--vary 1`), gentle fading (`--qsb 0.2`) and a soft noise floor
+(`--noise 0.15`), with no QRM. It is realistic, but relaxed enough for a
+long session. Want the perfect keyer on a silent band? Add `--clean`. Want
+a busier band? Turn the knobs up:
 
 | option         | what you hear                                                          |
 |----------------|------------------------------------------------------------------------|
@@ -159,7 +164,7 @@ gets easy, add some reality one knob at a time:
 | `--shape soft` | filter shape: `soft` (default) is round and never rings; `sharp` cuts nearby QRM hard but rings |
 
 The receiver is modelled properly. It is tuned so the station you follow
-sounds at `--tone` (650 Hz by default), and everything, including the
+sounds at `--tone` (600 Hz by default), and everything, including the
 signal, the QRM and the noise, goes through a CW filter centred on that
 note. So the noise is the soft rush you hear on your rig, not a harsh
 full-band hiss, and going from `--filter 500` to `--filter 250` lowers it by
@@ -196,7 +201,7 @@ and check the transcript afterwards.
 -f, --farnsworth N   effective speed in WPM, <= --wpm (default: same as --wpm)
 -d, --difficulty N   language difficulty 1-5, independent from speed (default 2)
 -m, --mode MODE      blocks | phrases | mixed (default mixed)
-    --tone HZ        sidetone / receive pitch (default 650)
+    --tone HZ        sidetone / receive pitch (default 600)
     --volume X       0.0-1.0 (default 0.5)
 -c, --count N        stop after N exercises (default: endless)
     --show-text      show the phrase before it plays (read-along practice)
@@ -208,12 +213,13 @@ and check the transcript afterwards.
     --player CMD     force the WAV player command
     --config PATH    another corpus / defaults file (default: config.toml next to pr.py)
 
-band conditions, all off by default:
-    --fist PCT       human timing variation, % of each element (0-50, try 10)
-    --vary WPM       each station keys up to +/- WPM off --wpm, on its own pitch (0-10)
-    --qsb X          fading depth 0-1 (try 0.5)
-    --noise X        band noise 0-1, relative to the signal in a 500 Hz filter (try 0.3)
-    --qrm X          another station calling CQ nearby, 0-1 (try 0.3)
+band conditions (default: a calm band):
+    --clean          perfect keyer on a silent band: every condition below off
+    --fist PCT       human timing variation, % of each element (0-50, default 5)
+    --vary WPM       each station keys up to +/- WPM off --wpm, on its own pitch (0-10, default 1)
+    --qsb X          fading depth 0-1 (default 0.2)
+    --noise X        band noise 0-1 (default 0.15; 0.3 busy, 0.5 noisy)
+    --qrm X          another station calling CQ nearby, 0-1 (default 0, try 0.3)
     --filter HZ      receiver CW filter, 100-1000 Hz (default 400), with noise or QRM
     --shape SHAPE    receiver filter shape: soft (default, no ringing) | sharp
 ```
@@ -277,7 +283,7 @@ Template rules:
 ## Under the hood
 
 ```bash
-python3 -m unittest -v     # 82 tests, under two seconds
+python3 -m unittest -v     # 83 tests, a few seconds
 ```
 
 [DOC.md](DOC.md) explains how it all works: the Farnsworth timing maths,
