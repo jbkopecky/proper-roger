@@ -8,7 +8,8 @@ Modules, in dependency order (each only imports the ones before it):
     audio        synthesis, band conditions, WAV files
     player       playback through the system player, pause / resume
     terminal     keyboard, text, colours, status line
-    rating       the Elo, the history
+    rating       the Elo, history records, the history file
+    scoreboard   the phrase on the air, and the scoreboard that rates it
     corpus       config.toml: templates, vocabulary, sidetone, Elo weights
     settings     command-line options and config defaults
     transmitter  each station's speed, pitch and strength; your sidetone

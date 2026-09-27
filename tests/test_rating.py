@@ -6,7 +6,8 @@ import unittest
 from pathlib import Path
 
 from proper_roger.corpus import CorpusError
-from proper_roger.rating import History, Rating, RatingModel, copy_result, default_history_path, longest_run, phrase_rating, rank_for
+from proper_roger.rating import (History, Rating, RatingModel, Record, copy_result,
+                                 default_history_path, longest_run, phrase_rating, rank_for)
 from proper_roger.settings import settings_from_argv
 from .support import tiny_corpus, calm
 
@@ -15,7 +16,7 @@ class RatingTests(unittest.TestCase):
     model = RatingModel()
 
     def test_reference_phrase_is_the_base(self):
-        rec = {"wpm": 15, "fw": 15, "level": 1, "words": 3}
+        rec = Record(wpm=15, fw=15, level=1, words=3)
         self.assertAlmostEqual(phrase_rating(self.model, rec), 1000.0)
 
     def test_worked_example_from_the_readme(self):
@@ -64,7 +65,7 @@ class RatingTests(unittest.TestCase):
         self.assertTrue(new.provisional)
         self.assertEqual(new.label(), "1000?")
         self.assertEqual(settled.label(), "1000")
-        rec = {"wpm": 15, "fw": 15, "level": 1, "words": 3}
+        rec = Record(wpm=15, fw=15, level=1, words=3)
         self.assertEqual(new.play(rec).delta, 2 * settled.play(rec).delta)
 
     def test_runs_ranks_and_bests(self):
@@ -136,3 +137,31 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(settings_from_argv([], {"history": "~/h.jsonl"}).history,
                          Path.home() / "h.jsonl")
         self.assertEqual(settings_from_argv([]).history, default_history_path())
+
+
+class RecordTests(unittest.TestCase):
+    def test_a_0_3_history_line_still_loads(self):
+        line = ('{"t":"2026-09-27T22:19:52+02:00","wpm":18,"fw":18,"set_wpm":18,"set_fw":18,'
+                '"level":2,"mode":"mixed","words":3,"fist":5,"vary":1,"qsb":0.2,"noise":0.15,'
+                '"qrm":0.0,"filter":400,"shape":"soft","agn":0,"qrs":0,"peek":false,"secs":0.1,'
+                '"text":"WX HR FOG"}')
+        rec = Record.from_json(line)
+        self.assertEqual((rec.wpm, rec.words, rec.text, rec.day.isoformat()),
+                         (18, 3, "WX HR FOG", "2026-09-27"))
+        self.assertEqual(Record.from_json(rec.to_json()), rec)
+
+    def test_unknown_keys_are_ignored_missing_ones_default(self):
+        rec = Record.from_json('{"t":"2026-09-27T20:00:00","wpm":20,"fw":15,"future":1}')
+        self.assertEqual((rec.level, rec.agn, rec.filter), (1, 0, 400))
+        self.assertTrue(rec.proper)
+
+    def test_bad_lines(self):
+        for line in ('[1]', '{"wpm":20,"fw":15}', '{"t":"x","wpm":20,"fw":15}',
+                     '{"t":"2026-09-27T20:00:00","wpm":0,"fw":15}',
+                     '{"t":"2026-09-27T20:00:00","fw":15}', 'nope'):
+            with self.assertRaises((ValueError, TypeError), msg=line):
+                Record.from_json(line)
+
+    def test_setup_is_what_you_chose(self):
+        self.assertEqual(Record(wpm=19, fw=14, level=3, set_wpm=20, set_fw=15).setup, (3, 20, 15))
+        self.assertEqual(Record(wpm=19, fw=14, level=3).setup, (3, 19, 14))

@@ -92,7 +92,7 @@ class MeterTests(unittest.TestCase):
         session.meter_on = True                                        # as on a terminal
         session.start("TNX FER CALL")
         self.assertTrue(session._track)
-        self.assertRegex(session.status_text(False), r"^S\d")
+        self.assertRegex(session.status_text(), r"^S\d")
 
     def test_settings(self):
         self.assertTrue(settings_from_argv([]).meter)

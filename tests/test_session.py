@@ -84,11 +84,11 @@ class SessionTests(unittest.TestCase):
 
     def test_status_line_does_not_repeat_agn(self):
         s = self.make_session([])
-        done = s.status_text(False)
+        done = s.status_text()
         self.assertIn("space agn", done)
         self.assertNotIn("  a agn", done)
         s.start("TEST")
-        self.assertIn("  a agn", s.status_text(False))
+        self.assertIn("  a agn", s.status_text())
 
     def test_player_error_is_shown_once(self):
         class BrokenPlayer(Player):
@@ -187,35 +187,35 @@ class RatedSessionTests(unittest.TestCase):
         _, out = self.run_session(["--count", "4", "-w", "20", "-f", "15"],
                                   "n\na\nn\ns\na\nn\nt\nn\n")
         recs = History(self.path).load().records
-        self.assertEqual([(r["agn"], r["qrs"], r["peek"]) for r in recs],
+        self.assertEqual([(r.agn, r.qrs, r.peek) for r in recs],
                          [(0, 0, False), (1, 0, False), (1, 1, False), (0, 0, True)])
-        self.assertEqual((recs[0]["wpm"], recs[0]["fw"], recs[0]["level"]), (20, 15, 2))
-        self.assertTrue(all(r["t"].startswith("2026-09-27T20:00:00") for r in recs))
+        self.assertEqual((recs[0].wpm, recs[0].fw, recs[0].level), (20, 15, 2))
+        self.assertTrue(all(r.t.startswith("2026-09-27T20:00:00") for r in recs))
         for text in ("PROPER ROGER", "ROGER after AGN", "ROGER after AGN + QRS", "PEEKED",
                      "Elo 1000?", "your first rated session", "73 ", "1 Proper Roger (25%)",
                      "2 AGN", "1 QRS", "1 peek"):
             self.assertIn(text, out)
-        self.assertIn(recs[0]["text"], out)                     # shown after the Roger
+        self.assertIn(recs[0].text, out)                     # shown after the Roger
         self.assertEqual(out.count("\n< AGN?") + out.count("\n< PSE AGN"), 2)
         self.assertEqual(out.count("\n< QRS PSE") + out.count("\n< PSE QRS"), 1)
 
     def test_rating_carries_over_between_sessions(self):
         first, _ = self.run_session(["--count", "3"], "n\nn\nn\n")
         second, out = self.run_session(["--count", "1"], "n\n")
-        self.assertEqual(second.opening, first.rating.value)
+        self.assertEqual(second.board.opening, first.rating.value)
         self.assertIn("3 phrases on record", out)
 
     def test_r_is_roger_like_on_the_air(self):
         self.run_session(["--count", "3"], "r\nn\n\n")          # r, n and Enter
         recs = History(self.path).load().records
-        self.assertEqual([(r["agn"], r["peek"]) for r in recs], [(0, False)] * 3)
+        self.assertEqual([(r.agn, r.peek) for r in recs], [(0, False)] * 3)
 
     def test_qrs_then_qrq_one_proper_roger_at_a_time(self):
         _, out = self.run_session(["--count", "6", "-w", "25", "-f", "18"],
                                   "s\nr\nr\na\nr\nr\nr\nr\n")
         recs = History(self.path).load().records
-        self.assertEqual([r["fw"] for r in recs], [15, 15, 16, 16, 17, 18])
-        self.assertEqual({r["set_fw"] for r in recs}, {18})
+        self.assertEqual([r.fw for r in recs], [15, 15, 16, 16, 17, 18])
+        self.assertEqual({r.set_fw for r in recs}, {18})
         self.assertIn("QRQ: Farnsworth 16, 2 to go", out)
         self.assertIn("QRQ: back to your Farnsworth 18", out)
         self.assertEqual(out.count("QRQ"), 3)                    # an AGN holds the speed
@@ -227,8 +227,8 @@ class RatedSessionTests(unittest.TestCase):
     def test_turning_the_speed_down_rates_the_slowest(self):
         self.run_session(["--count", "1", "-w", "20"], "-\n-\n+\nn\n")
         rec = History(self.path).load().records[0]
-        self.assertEqual((rec["wpm"], rec["fw"]), (18, 18))
-        self.assertEqual((rec["agn"], rec["qrs"]), (0, 0))       # tuning is free
+        self.assertEqual((rec.wpm, rec.fw), (18, 18))
+        self.assertEqual((rec.agn, rec.qrs), (0, 0))       # tuning is free
 
     def test_space_pauses_while_playing_and_asks_agn_once_done(self):
         clock = FakeClock()
@@ -248,7 +248,7 @@ class RatedSessionTests(unittest.TestCase):
                 return key
 
         self.assertTrue(session.exercise(1, Keys()))
-        self.assertEqual(session.played[0]["agn"], 1)            # pause + resume were free
+        self.assertEqual(session.board.played[0].agn, 1)            # pause + resume were free
 
     def test_read_along_is_off_the_record(self):
         session, out = self.run_session(["--count", "2", "--show-text"], "n\nn\n")
@@ -276,3 +276,36 @@ class RatedSessionTests(unittest.TestCase):
         _, out = self.run_session(["--count", "2"], "n\nn\n", save_to=blocker / "h.jsonl")
         self.assertEqual(out.count("warning: cannot save"), 1)
         self.assertIn("73", out)
+
+
+class LookTests(unittest.TestCase):
+    def session(self, argv):
+        return Session(settings_from_argv(["--no-play"] + argv), load_corpus(CONFIG),
+                       Player(SAMPLE_RATE, None, enabled=False), out=io.StringIO())
+
+    def test_header_is_two_lines_under_80_characters(self):
+        busy = ["-w", "60", "-f", "5", "-d", "5", "-m", "phrases", "--fist", "50", "--vary", "10",
+                "--qsb", "0.55", "--noise", "0.35", "--qrm", "0.45", "--filter", "1000",
+                "--shape", "sharp"]
+        for argv in ([], busy, ["--clean"]):
+            s = self.session(argv)
+            s.qrs_drop = 3                                     # the longest speed line
+            lines = s.header().split("\n")
+            self.assertEqual(len(lines), 2, argv)
+            self.assertTrue(all(len(line) <= 80 for line in lines), lines)
+        self.assertEqual(self.session(["--clean"]).band_line(), "perfect keyer, silent band")
+        self.assertIn("WPM", self.session([]).speed_line())
+        self.assertIn("noise", self.session([]).band_line())
+
+    def test_keys_on_demand_not_at_start(self):
+        s = self.session(["--count", "1"])
+        original = sys.stdin
+        sys.stdin = io.StringIO("?\nq\n")
+        try:
+            s.run()
+        finally:
+            sys.stdin = original
+        out = s.ui.out.getvalue()
+        self.assertEqual(out.count("show this key list"), 1)   # only after ?
+        self.assertLess(out.index("Exercise 1"), out.index("show this key list"))
+        self.assertIn("? help", s.status_text())

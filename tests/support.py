@@ -4,6 +4,7 @@ from pathlib import Path
 from proper_roger.audio import render
 from proper_roger.corpus import corpus_from_data
 from proper_roger.limits import SAMPLE_RATE
+from proper_roger.rating import Record
 
 
 HERE = Path(__file__).resolve().parent.parent   # the repository
@@ -35,8 +36,6 @@ class FakeClock:
 
 def calm(**kw):
     """A record for -w 20 -f 15 -d 3, 6 words, on the default calm band."""
-    rec = {"t": "2026-09-27T20:00:00+02:00", "wpm": 20, "fw": 15, "level": 3, "words": 6,
-           "fist": 5, "vary": 1, "qsb": 0.2, "noise": 0.15, "qrm": 0.0, "filter": 400,
-           "agn": 0, "qrs": 0, "peek": False}
-    rec.update(kw)
-    return rec
+    fields = dict(t="2026-09-27T20:00:00+02:00", wpm=20, fw=15, level=3, words=6,
+                  fist=5, vary=1, qsb=0.2, noise=0.15, qrm=0.0, filter=400)
+    return Record(**{**fields, **kw})

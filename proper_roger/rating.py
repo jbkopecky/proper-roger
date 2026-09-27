@@ -3,7 +3,7 @@ import json
 import math
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, fields
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -52,6 +52,68 @@ class RatingModel:
     ranks: tuple = DEFAULT_RANKS
 
 
+@dataclass(frozen=True)
+class Record:
+    """One phrase you Rogered, as the history keeps it: how it was sent
+    (enough to rate it again with any weights), what you had chosen, and how
+    you copied it. Never a rating."""
+    # how it was sent: everything phrase_rating() looks at
+    wpm: int
+    fw: int
+    level: int = 1
+    words: int = 1
+    fist: int = 0
+    vary: int = 0
+    qsb: float = 0.0
+    noise: float = 0.0
+    qrm: float = 0.0
+    filter: int = 400
+    shape: str = "soft"
+    # what you had chosen (a --vary station sends a little off it)
+    mode: str = "mixed"
+    set_wpm: int | None = None
+    set_fw: int | None = None
+    # how you copied it
+    agn: int = 0
+    qrs: int = 0
+    peek: bool = False
+    secs: float = 0.0
+    t: str = ""         # local ISO time with its UTC offset
+    text: str = ""
+
+    @property
+    def proper(self) -> bool:
+        """A Proper Roger: no AGN, no QRS, no peek."""
+        return not (self.agn or self.qrs or self.peek)
+
+    @property
+    def day(self) -> date:
+        return datetime.fromisoformat(self.t).date()
+
+    @property
+    def setup(self):
+        """``(level, wpm, farnsworth)`` you chose, not what a --vary station sent."""
+        wpm = self.wpm if self.set_wpm is None else self.set_wpm
+        return self.level, wpm, self.fw if self.set_fw is None else self.set_fw
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), separators=(",", ":"))
+
+    @classmethod
+    def from_json(cls, line: str) -> "Record":
+        """A record from one history line; ValueError if it cannot be one.
+        Keys it does not know are ignored, so older and newer files load."""
+        data = json.loads(line)
+        if not isinstance(data, dict):
+            raise ValueError("not an object")
+        known = {f.name for f in fields(cls)}
+        rec = cls(**{k: v for k, v in data.items() if k in known})
+        datetime.fromisoformat(rec.t)
+        if not (rec.wpm > 0 and rec.fw > 0):
+            raise ValueError("speeds must be positive")
+        return rec
+
+
 def rank_for(model: RatingModel, value: float):
     """``(name, next_name, next_at)`` for a rating; the next rank is None at the top."""
     name, following = model.ranks[0][1], None
@@ -63,22 +125,19 @@ def rank_for(model: RatingModel, value: float):
     return (name,) + (following or (None, None))
 
 
-def phrase_rating(model: RatingModel, rec: dict) -> float:
+def phrase_rating(model: RatingModel, rec: Record) -> float:
     """D: how hard a phrase was to copy, sent the way ``rec`` says."""
-    wpm = rec["wpm"]
-    fw = rec.get("fw", wpm)
     share = model.farnsworth_share
-    blended = wpm ** (1.0 - share) * fw ** share
-    words = max(1, rec.get("words", 1))
+    blended = rec.wpm ** (1.0 - share) * rec.fw ** share
     return (model.base
             + model.speed * math.log2(blended / model.speed_ref)
-            + model.level * (rec.get("level", 1) - 1)
-            + model.words * math.log2(words / model.words_ref)
-            + model.fist * rec.get("fist", 0)
-            + model.qsb * rec.get("qsb", 0.0)
-            + model.noise * rec.get("noise", 0.0) * math.sqrt(rec.get("filter", 400) / 400)
-            + model.qrm * rec.get("qrm", 0.0)
-            + model.vary * rec.get("vary", 0))
+            + model.level * (rec.level - 1)
+            + model.words * math.log2(max(1, rec.words) / model.words_ref)
+            + model.fist * rec.fist
+            + model.qsb * rec.qsb
+            + model.noise * rec.noise * math.sqrt(rec.filter / 400)
+            + model.qrm * rec.qrm
+            + model.vary * rec.vary)
 
 
 def copy_result(model: RatingModel, agn: int = 0, qrs: int = 0, peek: bool = False) -> float:
@@ -128,11 +187,10 @@ class Rating:
         """``1412``, or ``1043?`` while provisional."""
         return f"{round(self.value)}{'?' if self.provisional else ''}"
 
-    def play(self, rec: dict) -> Game:
+    def play(self, rec: Record) -> Game:
         model = self.model
         d = phrase_rating(model, rec)
-        agn, qrs, peek = rec.get("agn", 0), rec.get("qrs", 0), bool(rec.get("peek"))
-        s = copy_result(model, agn, qrs, peek)
+        s = copy_result(model, rec.agn, rec.qrs, rec.peek)
         e = self.expected(d)
         k = model.k_provisional if self.provisional else model.k
         before = self.value
@@ -142,7 +200,7 @@ class Rating:
         new_best = (not self.provisional and self.best is not None
                     and round(after) > round(self.best))
         self.best = after if self.best is None else max(self.best, after)
-        return Game(d, before, after, _proper(rec), new_best,
+        return Game(d, before, after, rec.proper, new_best,
                     rank_for(model, before)[0], rank_for(model, after)[0])
 
 
@@ -173,29 +231,20 @@ class History:
             return self
         for line in filter(str.strip, text.splitlines()):
             try:
-                rec = json.loads(line)
-                datetime.fromisoformat(rec["t"])       # a date...
-                if not (rec["wpm"] > 0 and rec.get("fw", 1) > 0):   # ...and speeds
-                    raise ValueError
-            except (ValueError, TypeError, KeyError):
+                self.records.append(Record.from_json(line))
+            except (ValueError, TypeError):
                 self.skipped += 1
-                continue
-            self.records.append(rec)
         return self
 
-    def append(self, rec: dict) -> None:
+    def append(self, rec: Record) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+            f.write(rec.to_json() + "\n")
         self.records.append(rec)
 
 
 def speed_label(wpm, fw) -> str:
     return f"{wpm}" if wpm == fw else f"{wpm}/{fw}"
-
-
-def _day(rec: dict) -> date:
-    return datetime.fromisoformat(rec["t"]).date()
 
 
 def streaks(days, today: date):
@@ -214,20 +263,10 @@ def streaks(days, today: date):
     return current, best
 
 
-def setup_of(rec: dict):
-    """``(level, wpm, farnsworth)`` you chose, not what a --vary station sent."""
-    wpm = rec.get("set_wpm", rec["wpm"])
-    return rec.get("level", 1), wpm, rec.get("set_fw", rec.get("fw", wpm))
-
-
-def _proper(rec: dict) -> bool:
-    return not (rec.get("agn") or rec.get("qrs") or rec.get("peek"))
-
-
 def longest_run(records) -> int:
     """The most Proper Rogers in a row."""
     best = run = 0
     for rec in records:
-        run = run + 1 if _proper(rec) else 0
+        run = run + 1 if rec.proper else 0
         best = max(best, run)
     return best

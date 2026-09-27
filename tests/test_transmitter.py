@@ -52,7 +52,7 @@ class SidetoneTests(unittest.TestCase):
         normal, starts = s._audio
         s.ask_agn()
         loaded = s.player._samples
-        self.assertEqual(s.agn, 1)
+        self.assertEqual(s.attempt.agn, 1)
         self.assertEqual(loaded[-len(normal):], normal)          # then the phrase, as heard
         head = loaded[:len(loaded) - len(normal)]
         # your sidetone is dry: a perfect keyer, silence between elements
@@ -71,7 +71,7 @@ class SidetoneTests(unittest.TestCase):
         s.start("TNX FER CALL")
         s.ask_agn()
         self.assertEqual(s.player._samples, s._audio[0])
-        self.assertEqual(s.agn, 1)
+        self.assertEqual(s.attempt.agn, 1)
 
     def test_sidetone_config_is_checked(self):
         data = {"sidetone": {"agn": ["AGN ¿"]}}

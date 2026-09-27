@@ -4,7 +4,8 @@ from datetime import date, timedelta
 
 from .limits import WPM_MAX, WPM_MIN
 from .terminal import UI, plural
-from .rating import History, Rating, RatingModel, _day, _proper, longest_run, phrase_rating, rank_for, setup_of, speed_label, streaks
+from .rating import (History, Rating, RatingModel, longest_run, phrase_rating, rank_for,
+                     speed_label, streaks)
 
 
 def sparkline(values, blocks: str) -> str:
@@ -24,14 +25,14 @@ def bar(fraction: float, width: int, sym: dict) -> str:
 
 def next_step(records: list) -> str:
     """What to try next, from the last 50 phrases at your latest setup."""
-    setup = setup_of(records[-1])
-    recent = [r for r in records if setup_of(r) == setup][-50:]
+    setup = records[-1].setup
+    recent = [r for r in records if r.setup == setup][-50:]
     level, wpm, fw = setup
     where = f"d{level} {speed_label(wpm, fw)}"
     if len(recent) < 20:
         return (f"{20 - len(recent)} more phrases at {where} and I can tell you "
                 "what to try next")
-    rate = sum(1 for r in recent if _proper(r)) / len(recent)
+    rate = sum(1 for r in recent if r.proper) / len(recent)
     pct = f"{rate:.0%} Proper Rogers over your last {len(recent)} at {where}"
     if rate >= 0.8:
         options = []
@@ -60,8 +61,8 @@ def day_minutes(records) -> dict:
     """Minutes on air per day."""
     minutes = {}
     for rec in records:
-        day = _day(rec)
-        minutes[day] = minutes.get(day, 0.0) + rec.get("secs", 0) / 60
+        day = rec.day
+        minutes[day] = minutes.get(day, 0.0) + rec.secs / 60
     return minutes
 
 
@@ -133,15 +134,15 @@ def setups_table(records, model: RatingModel, ui: "UI", today: date) -> list:
     """The setups played in the last 30 days, most played first."""
     groups = {}
     for rec in records:
-        if _day(rec) >= today - timedelta(days=29):
-            groups.setdefault(setup_of(rec), []).append(rec)
+        if rec.day >= today - timedelta(days=29):
+            groups.setdefault(rec.setup, []).append(rec)
     if not groups:
         return []
     row = "  {:<14} {:<6} {:<7} {:>7} {:>13} {:>11}".format
     lines = ["", ui.paint(row("last 30 days", "level", "speed", "phrases", "Proper Roger",
                               "phrase Elo"), "label")]
     for (level, wpm, fw), recs in sorted(groups.items(), key=lambda kv: -len(kv[1]))[:6]:
-        rate = sum(1 for r in recs if _proper(r)) / len(recs)
+        rate = sum(1 for r in recs if r.proper) / len(recs)
         avg = sum(phrase_rating(model, r) for r in recs) / len(recs)
         lines.append(row("", f"d{level}", speed_label(wpm, fw), len(recs),
                          f"{rate:.0%}", round(avg)))
@@ -163,7 +164,7 @@ def stats_report(history: History, model: RatingModel, ui: "UI",
     rating = Rating(model)
     by_day = {}
     for rec in records:
-        by_day[_day(rec)] = rating.play(rec).after
+        by_day[rec.day] = rating.play(rec).after
     rank, following, at = rank_for(model, rating.value)
     lines.append("  " + ui.joined([ui.field("Elo", rating.label()), ui.paint(rank, "value"),
                                    ui.field("best", round(rating.best))]))
@@ -179,12 +180,12 @@ def stats_report(history: History, model: RatingModel, ui: "UI",
         lines.append("  " + ui.paint(f"provisional: {left} more {plural(left, 'phrase')} "
                                      "before it settles", "label"))
     lines.append("")
-    seconds = sum(r.get("secs", 0) for r in records)
+    seconds = sum(r.secs for r in records)
     hours, minutes = divmod(int(seconds // 60), 60)
     on_air = f"{hours} h {minutes:02d} min" if hours else f"{minutes} min"
-    proper = sum(1 for r in records if _proper(r))
+    proper = sum(1 for r in records if r.proper)
     last50 = records[-50:]
-    recent = sum(1 for r in last50 if _proper(r)) / len(last50)
+    recent = sum(1 for r in last50 if r.proper) / len(last50)
     current, best_streak = streaks(by_day, today)
     run = longest_run(records)
     count = len(records)
