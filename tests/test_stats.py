@@ -103,7 +103,7 @@ class HeatmapTests(unittest.TestCase):
     def test_nudge_keeps_the_streak_alive(self):
         ui = UI(io.StringIO())
         lines = heatmap(self.records([(22, 5), (23, 5)]), ui, date(2026, 9, 24))
-        self.assertIn("keep your 2-day streak alive", lines[-1])
+        self.assertIn("keep it alive today", lines[-1])
 
     def test_shown_when_a_session_starts(self):
         with tempfile.TemporaryDirectory() as d:
@@ -120,4 +120,6 @@ class HeatmapTests(unittest.TestCase):
                 session.run()
             finally:
                 sys.stdin = original
-        self.assertIn("Mo Tu We Th Fr Sa Su", session.ui.out.getvalue())
+        out = session.ui.out.getvalue()
+        self.assertIn("streak 1 day", out)
+        self.assertNotIn("Mo Tu We", out)                      # the full calendar is for --stats

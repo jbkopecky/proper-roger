@@ -72,14 +72,40 @@ def heat_level(minutes: float | None) -> int:
     return 1 + sum(1 for m in HEAT_MINUTES if minutes >= m)
 
 
-def heat_cell(level: int, ui: "UI") -> str:
-    """Two characters for a day. The shade carries the level, so it reads in
-    any colour scheme (16 colours have only two greens); on a colour
+def heat_cell(level: int, ui: "UI", width: int = 2) -> str:
+    """A day, ``width`` characters wide. The shade carries the level, so it
+    reads in any colour scheme (16 colours have only two greens); on a colour
     terminal a day off is a faint square instead of dots."""
-    cell = ui.sym["heat"][level]
-    if level == 0 and ui.color:
-        cell = ui.sym["heat"][1]
-    return ui.paint(cell, f"heat{level}")
+    cell = ui.sym["heat"][1 if level == 0 and ui.color else level]
+    return ui.paint(cell[:width], f"heat{level}")
+
+
+def streak_note(minutes: dict, ui: "UI", today: date) -> str:
+    """``streak 4 days · today 12 min``, or a nudge when today is still to play."""
+    current, _ = streaks(minutes, today)
+    done_today = minutes.get(today)
+    if done_today is not None:
+        nudge = ui.field("today", max(1, round(done_today)), "min")
+    elif current:
+        nudge = ui.paint("keep it alive today", "bold")
+    else:
+        nudge = ui.paint("not played today yet", "label")
+    return ui.joined([ui.field("streak", current, plural(current, "day")), nudge])
+
+
+def habit_line(records, ui: "UI", today: date | None = None, weeks: int = 3) -> str:
+    """The practice calendar on one line: a character a day, Monday first,
+    a space between weeks, up to today, then the streak."""
+    today = today or date.today()
+    minutes = day_minutes(records)
+    first = today - timedelta(days=today.weekday(), weeks=weeks - 1)
+    week_strips = []
+    for week in range(weeks):
+        monday = first + timedelta(weeks=week)
+        days = [monday + timedelta(days=offset) for offset in range(7)]
+        week_strips.append("".join(heat_cell(heat_level(minutes.get(day)), ui, width=1)
+                                   for day in days if day <= today))
+    return " ".join(week_strips) + "   " + streak_note(minutes, ui, today)
 
 
 def heatmap(records, ui: "UI", today: date | None = None, weeks: int = 3) -> list:
@@ -100,16 +126,7 @@ def heatmap(records, ui: "UI", today: date | None = None, weeks: int = 3) -> lis
             cells.append(heat_cell(heat_level(minutes.get(day)), ui))
         lines.append("  " + ui.paint(f"{monday:%b} {monday.day:>2}", "label") + "  "
                      + " ".join(cells))
-    current, _ = streaks(minutes, today)
-    done_today = minutes.get(today)
-    if done_today is not None:
-        nudge = ui.field("today", max(1, round(done_today)), "min")
-    elif current:
-        nudge = ui.paint(f"today: not yet, keep your {current}-day streak alive", "bold")
-    else:
-        nudge = ui.paint("today: not yet", "label")
-    streak = ui.field("streak", current, plural(current, "day"))
-    lines.append(f"  {'':6}  " + ui.joined([streak, nudge]))
+    lines.append(f"  {'':6}  " + streak_note(minutes, ui, today))
     return lines
 
 

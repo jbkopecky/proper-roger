@@ -184,8 +184,8 @@ class Rating:
         return 1.0 / (1.0 + 10.0 ** ((d - self.value) / self.model.scale))
 
     def label(self) -> str:
-        """``1412``, or ``1043?`` while provisional."""
-        return f"{round(self.value)}{'?' if self.provisional else ''}"
+        """``1412``: the rating as shown (provisional is said once, in words)."""
+        return str(round(self.value))
 
     def play(self, rec: Record) -> Game:
         model = self.model

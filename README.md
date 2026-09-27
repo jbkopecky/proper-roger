@@ -12,31 +12,26 @@ shows you whether you're building the habit.
 
 ```text
 $ python3 pr.py -d 3
+CW Ragchew RX   Elo 1547 · Head copier · 154 to Brass pounder
+25/18 WPM · level 3 · calm band
+░░▒▒▒▒░ ▒░▒▒▒▒▒ ░   streak 14 days · keep it alive today
 
-CW Ragchew RX
-25 WPM · Farnsworth 18 · Difficulty 3 · Mixed
-fist 5% · vary ±1 · QSB 0.2 · noise 0.15 · filter 400 Hz soft
-Elo 1412 · Ragchewer · 88 to Head copier · 612 phrases on record
+ 1  FIRST TIME ON 15M TODAY           ✓ PROPER ROGER           +13  1560
+ 2  NAME FRED FRED = QTH HAMBURG HAMBURG = HW CPY? <KN>
+                                      ✓ Roger after AGN         +3  1563
+ 3  WX COLD TEMP MINUS 1C             ✓ Roger after QRS         -3  1560
+ 4  UR SIG FB WITH SOME QSB           ✗ peeked                 -13  1547
+ 5  NAME AGN FRED                     ✓ PROPER ROGER            +9  1556
+S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶  QRS 16  r roger  a agn  s qrs  t peek  ? help
 
-          Mo Tu We Th Fr Sa Su
-  Sep  7  ▒▒ ▓▓ ·· ▒▒ ██ ░░ ··
-  Sep 14  ▓▓ ▒▒ ▒▒ ·· ▓▓ ██ ▒▒
-  Sep 21  ▒▒ ▓▓ ▓▓ ▒▒ ▓▓ ▒▒ ··
-          streak 6 days · today: not yet, keep your 6-day streak alive
-
-Exercise 1
-S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶ playing  Elo 1412  r roger  space pause  a agn  s qrs  t peek  q quit  ? help
-NAME HR IS STEVE AND QTH IS GRENOBLE
-✓ PROPER ROGER   +17  → Elo 1429   phrase 1579
-  ★ 5 Proper Rogers in a row
-
-Exercise 2
-◀ AGN?
-SO I USE A VERTICAL FER NW HI
-✓ ROGER after AGN   +5  → Elo 1434   phrase 1572
+73 · 5 phrases, 2 Proper Rogers · 1 min · Elo 1547 → 1556 (+9)
 ```
 
-When you press `r`, the phrase is printed, so you can check your copy.
+Each phrase is one line: you hear it, and when you Roger it, the text
+appears with how you copied it, what it did to your Elo, and your new
+rating. The line at the bottom is live: an S-meter, the keys, and `QRS 16`
+while the station is still slowed down for you.
+
 
 ## Why it is different
 
@@ -113,7 +108,7 @@ on Windows. You can also pass any other command with `--player "cmd"`.
 | `a`              | `AGN?`    | the phrase again, from the top                               |
 | `s`              | `QRS PSE` | the phrase again with more space, and the station **stays** slower until you Roger |
 | `space`          |           | pause / resume on the current word; once the phrase is over, `AGN?` |
-| `t`              |           | peek: reveal / hide the text (the phrase then scores nothing) |
+| `t`              |           | peek: show / hide the text on the status line (the phrase then scores nothing) |
 | `+` / `-`        |           | character speed +1 / -1 WPM (re-plays the phrase, free)      |
 | `]` / `[`        |           | Farnsworth effective speed +1 / -1 WPM (free)                |
 | `h`, `?`         |           | show this key list                                           |
@@ -180,7 +175,7 @@ than going from 30 to 35. Level 5 at 30 WPM on a noisy band is above 2100.
 
 ```text
 E = 1 / (1 + 10^((D − R) / 400))
-R ← R + K · (S − E)          K = 48 for your first 50 phrases (Elo 1043?), then 24
+R ← R + K · (S − E)          K = 48 for your first 50 phrases ("provisional"), then 24
 ```
 
 Worked example: you are rated 1400 and play `-w 20 -f 15 -d 3` on the
@@ -228,11 +223,11 @@ What that means in practice:
 Out of the box (25/18 WPM, level 2, calm band), phrases are rated around 1400.
 Everyone starts at 1000 and climbs fast while the rating is provisional.
 Along the way you'll see `★ 5 Proper Rogers in a row` (then 10, 25, 50,
-100), `▲ RANK UP` and `★ new best`. Each session ends with a summary:
+100), `▲ RANK UP` and `★ new best` under the phrase that did it. Each
+session ends with one line:
 
 ```text
-73 · 24 phrases · 17 Proper Rogers (71%) · 4 AGN · 2 QRS · 1 peek · best run 9 · 18 min
-Elo 1388 → 1431 (+43) · Ragchewer · best 1440
+73 · 24 phrases, 17 Proper Rogers · 18 min · Elo 1388 → 1431 (+43)
 ```
 
 ### `--stats`
@@ -241,7 +236,7 @@ Elo 1388 → 1431 (+43) · Ragchewer · best 1440
 $ python3 pr.py --stats
 proper-roger · CW RX rating
 
-  Elo 1519   Head copier   best 1632
+  Elo 1519 · Head copier · best 1632
   Head copier ██░░░░░░░░░░░░░░░░░░░░░░ Brass pounder  182 to go
 
   657 phrases · 2 h 19 min on air · 56% Proper Rogers (48% in the last 50)
@@ -269,22 +264,27 @@ In between, you're in the sweet spot.
 
 ### Build the habit
 
-Ten minutes a day beats an hour on Sunday. Every session, and `--stats`,
-starts with the last three weeks, one square per day, Monday first:
+Ten minutes a day beats an hour on Sunday. Every session starts with the
+last three weeks on one line, a character a day, Monday first, a space
+between weeks, up to today:
 
-| square | minutes on air that day |
-|--------|-------------------------|
-| `··`   | none                    |
-| `░░`   | under 5                 |
-| `▒▒`   | 5 to 10                 |
-| `▓▓`   | 10 to 20                |
-| `██`   | 20 or more              |
+```text
+░░▒▒▒▒░ ▒░▒▒▒▒▒ ░   streak 14 days · keep it alive today
+```
 
-On a colour terminal they're green, and a day off is a faint grey square.
+| day   | minutes on air |
+|-------|----------------|
+| `·`   | none           |
+| `░`   | under 5        |
+| `▒`   | 5 to 10        |
+| `▓`   | 10 to 20       |
+| `█`   | 20 or more     |
+
+On a colour terminal they're green, and a day off is a faint grey `░`.
+`--stats` shows the same three weeks as a calendar, a row per week.
 Minutes on air count from the start of each phrase to your Roger. Next to
-the calendar is your streak of days in a row. If you haven't played today
-yet, it reminds you to keep the streak alive; the day isn't lost until
-midnight.
+it is your streak of days in a row. If you haven't played today yet, it
+says "keep it alive today": the day isn't lost until midnight.
 
 ### Your history
 
@@ -338,20 +338,16 @@ Then it **stays** at that speed. Each Proper Roger after that brings it
 back up by 1 WPM (QRQ), until it's back to your own Farnsworth speed:
 
 ```text
-◀ QRS PSE
-  QRS: Farnsworth 15, back to 18 as you copy
-✓ ROGER after QRS   ...
-✓ PROPER ROGER   ...
-  ▲ QRQ: Farnsworth 16, 2 to go
-✓ ROGER after AGN   ...            (an AGN or a peek holds the speed)
-✓ PROPER ROGER   ...
-  ▲ QRQ: Farnsworth 17, 1 to go
-✓ PROPER ROGER   ...
-  ▲ QRQ: back to your Farnsworth 18
+ 3  WX COLD TEMP MINUS 1C             ✓ Roger after QRS         -3  1560   QRS 15
+ 4  UR SIG FB WITH SOME QSB           ✓ PROPER ROGER           +12  1572   QRS 16
+ 5  NAME AGN FRED                     ✓ Roger after AGN         +2  1574   QRS 16 (held)
+ 6  TNX FER CALL                      ✓ PROPER ROGER            +9  1583   QRS 17
+ 7  HW CPY?                           ✓ PROPER ROGER           +10  1593   back to 18
 ```
 
-Press `s` again to slow down further. The header shows
-`Farnsworth 15 (QRS, yours is 18)` while a QRS is on. `[` or `]` takes over
+The right-hand column is what the status line shows. Press `s` again to
+slow down further. After a speed key, the setup line shows
+`25/15 WPM (QRS, yours is 18)`. `[` or `]` takes over
 from there and ends the QRS. A QRS'd phrase is a repeat, scored like an AGN
 (0.5), and rated at the slower speed you heard it at, as are the phrases
 after it until you're back up to speed.
@@ -362,10 +358,10 @@ On a terminal, the status line starts with a retro LED S-meter, like the
 bar graphs on small QRP rigs:
 
 ```text
-S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶ playing
-S3    ▮▮▮▯▯▯▯▯▯▯▯▯  ▶ playing     between words: the noise floor
-S9+10 ▮▮▮▮▮▮▮▮▮▮▯▯  ▶ playing     a loud station, over S9 in red
-TX    ▮▮▮▮▮▮▮▮▮▮▮▮  ▶ playing     you, sending AGN?
+S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶  ...
+S3    ▮▮▮▯▯▯▯▯▯▯▯▯  ▶  ...     between words: the noise floor
+S9+10 ▮▮▮▮▮▮▮▮▮▮▯▯  ▶  ...     a loud station, over S9 in red
+TX    ▮▮▮▮▮▮▮▮▮▮▮▮  ▶  ...     you, sending AGN?
 ```
 
 It reads the audio you actually hear, like a real meter. Each station
@@ -382,7 +378,7 @@ off.
 Colours use only the 16 standard terminal colours, so they follow your
 terminal's own colour scheme: light, dark, Solarized, whatever you run.
 The look is quiet on purpose. Names are grey and values bold
-(`Farnsworth` **`18`**), keys are bold with what they do in grey. Green is
+(`level` **`3`**), keys are bold with what they do in grey. Green is
 good, red is a loss. In the heatmap, the shade carries the level, so it reads
 even where the terminal has only one green. Set `NO_COLOR=1` for none. They
 are off automatically when the output isn't a terminal.
@@ -402,7 +398,7 @@ PSE QRS A BIT
 ```
 
 Name, QTH, rig, antenna, power, key, job, hobby and band stay the same for
-8 phrases, then a new station comes on (`Exercise 9 · new station`). Use
+8 phrases, then a new station comes on (a quiet `new station` line). Use
 `--station N` to change how long a station stays, or `--station 0` for new
 values every phrase. With `--vary`, each station also keys at its own speed
 and pitch, and the revealed text tells you what was actually sent:

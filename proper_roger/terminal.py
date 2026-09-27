@@ -131,11 +131,11 @@ def plural(n: int, word: str) -> str:
 def _symbols(out):
     unicode = {"play": "▶", "pause": "⏸", "stop": "■", "dot": "·", "pm": "±",
                "ok": "✓", "bad": "✗", "star": "★", "up": "▲", "down": "▼", "to": "→",
-               "full": "█", "empty": "░", "blocks": "▁▂▃▄▅▆▇█", "send": "◀",
+               "full": "█", "empty": "░", "blocks": "▁▂▃▄▅▆▇█",
                "heat": ("··", "░░", "▒▒", "▓▓", "██"), "lit": "▮", "unlit": "▯"}
     ascii_ = {"play": ">", "pause": "||", "stop": "#", "dot": "-", "pm": "+/-",
               "ok": "+", "bad": "x", "star": "*", "up": "^", "down": "v", "to": "->",
-              "full": "#", "empty": ".", "blocks": "_.-~=+*#", "send": "<",
+              "full": "#", "empty": ".", "blocks": "_.-~=+*#",
               "heat": ("..", "--", "==", "##", "@@"), "lit": "|", "unlit": "."}
     try:
         encoding = getattr(out, "encoding", None) or "ascii"
@@ -146,6 +146,11 @@ def _symbols(out):
 
 
 ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def visible_len(text: str) -> int:
+    """Length on screen: colour codes take no room."""
+    return len(ANSI_RE.sub("", text))
 
 
 def clip(text: str, width: int) -> str:

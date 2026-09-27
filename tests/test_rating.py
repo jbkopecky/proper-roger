@@ -63,7 +63,7 @@ class RatingTests(unittest.TestCase):
     def test_provisional_moves_faster(self):
         new, settled = Rating(self.model), self.rated(1000)
         self.assertTrue(new.provisional)
-        self.assertEqual(new.label(), "1000?")
+        self.assertEqual(new.label(), "1000")
         self.assertEqual(settled.label(), "1000")
         rec = Record(wpm=15, fw=15, level=1, words=3)
         self.assertEqual(new.play(rec).delta, 2 * settled.play(rec).delta)

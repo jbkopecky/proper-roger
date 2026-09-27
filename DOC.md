@@ -396,19 +396,41 @@ touching the file system.
 
 ### 4.10 Session and UI (`Session`, `UI`): `session`, `terminal`
 
-- The header is two lines, each under 80 columns. `speed_line()`:
-  `25 WPM · Farnsworth 18 · Difficulty 3 · Mixed` (`Farnsworth` omitted
-  when it equals the character speed, `(QRS, yours is 18)` during a QRS,
-  `no audio` under `--no-play`). `band_line()`: the active conditions
-  (`fist 5% · vary ±1 · QSB 0.2 · noise 0.15 · filter 400 Hz soft`), or
-  `perfect keyer, silent band`. A speed change reprints only the first.
-  Names are grey and values bold (`UI.field`).
+The screen is a header, then one line per phrase, then one line to say
+goodbye, with a live status line under the last phrase:
+
+```text
+CW Ragchew RX   Elo 1547 · Head copier · 154 to Brass pounder      title_line()
+25/18 WPM · level 3 · calm band                                    setup_line()
+░░▒▒▒▒░ ▒░▒▒▒▒▒ ░   streak 14 days · keep it alive today           stats.habit_line()
+
+ 1  FIRST TIME ON 15M TODAY           ✓ PROPER ROGER    +13  1560  phrase_line()
+S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶  QRS 16  r roger  a agn  s qrs  t peek  ? help   status_text()
+
+73 · 5 phrases, 2 Proper Rogers · 1 min · Elo 1547 → 1556 (+9)    summary()
+```
+
+- `title_line()`: the Elo, rank, points to the next rank, and
+  `provisional` during the first phrases (the number itself is always
+  plain), or `off the record (--no-play)`.
+- `setup_line()`: speed (`25/18 WPM`, `(QRS, yours is 18)` during a QRS),
+  level, the mode when not mixed, `no audio`, and `band_text()`: `calm
+  band` for the defaults, `clean band` for `--clean`, else what differs
+  from calm (`calm band, noise 0.4, filter 250 Hz`), without the prefix
+  when more than two things differ. If the line would pass
+  `HEADER_WIDTH` (80), the band goes to a line of its own. A speed key
+  reprints it, indented.
+- `phrase_line()`: number, text (the `--vary` speed only when the station
+  was `OFF_SPEED_WPM` or more off yours), and `verdict()`: the outcome
+  padded to `VERDICT_WIDTH`, the Elo change and the new Elo, in fixed
+  columns. A phrase longer than `PHRASE_WIDTH` puts the verdict on a
+  second line, in the same column. Notes (run milestones, rank changes,
+  new bests) follow, indented. A new station gets a quiet `new station`
+  line before its first phrase.
 - There is no key list at start-up: the status line carries the quick keys
   and `? help`; `h` or `?` prints `KEYS_HELP`.
-- Each exercise title is `Exercise N`, or `Exercise N · new station` when
-  the generator starts a new station (never for the first exercise).
-- One status line (`▶ playing...`, `⏸ paused`, `■ done` plus the key hints)
-  is rewritten in place with `\r` and `ESC[K` on a TTY, and only when its text
+- The status line (`▶`, `⏸` or `■`, then `QRS 15` while a QRS is on, the
+  phrase itself while revealed, and the keys) is rewritten in place with `\r` and `ESC[K` on a TTY, and only when its text
   changes. Off a TTY each change is printed as a normal line. Symbols fall
   back to ASCII when the output encoding cannot represent them; on Windows
   `os.system("")` enables ANSI processing in the console.
@@ -419,23 +441,20 @@ touching the file system.
   character speed is lower, so `-` then `+` from 16/15 gives back 16/15.
   `]`/`[` change the effective speed within `[5, wpm]`; reaching `wpm`
   turns Farnsworth off.
-- The status line hides `a agn` once a phrase is done, since space
-  asks AGN then. On a rated session it ends with `Elo 1412`, and it is
-  cut to the terminal width, since a wrapped line can no longer be
-  rewritten in place. Verdicts are coloured on a TTY unless `NO_COLOR` is set.
+- The status line is cut to the terminal width, since a wrapped line can
+  no longer be rewritten in place. Colours are on for a TTY unless
+  `NO_COLOR` is set.
 - A player failure is printed once as a `warning:` line.
-- `t` toggles the reveal and prints the phrase (or `(text hidden)`) as a
-  permanent line, so revealed text stays in the scrollback. With `--vary` the
-  speed the station actually sent is appended: `... HI   (17 WPM)`.
+- `t` toggles the reveal: the phrase appears on the status line (and in
+  its phrase line once you Roger), and the attempt counts as a peek.
 - `a` (and space once the phrase is over) is `ask_agn()`. `s` is
   `ask_qrs()`: `qrs_drop` grows by `QRS_STEP_WPM` (3), never below 5 WPM,
   and the phrase is re-rendered at `sent_fw = farnsworth - qrs_drop`, the
   characters still at `--wpm`. The drop outlives the phrase: every render
-  uses `sent_fw`, and each Proper Roger takes `QRQ_STEP_WPM` (1) off it
-  with a `▲ QRQ` note. An AGN or a peek holds it. `[`/`]` start from
+  uses `sent_fw`, and each Proper Roger takes `QRQ_STEP_WPM` (1) off it;
+  the status line's `QRS 16` counts back up. An AGN or a peek holds it. `[`/`]` start from
   `sent_fw` and clear the drop, so manual control always wins. Both keys
-  go through `_send_then()`. It echoes the call as a `◀ AGN?` line, renders
-  it with `Transmitter.sidetone()`, which uses no conditions and no `--vary`
+  go through `_send_then()`. It renders your call with `Transmitter.sidetone()`, which uses no conditions and no `--vary`
   at your character speed and tone, at `SIDETONE_LEVEL` of the volume, and
   plays sidetone + `SIDETONE_GAP_SECONDS` of silence + the phrase as one
   buffer. The buffer has word marks for every part, so pause/resume still
@@ -443,9 +462,8 @@ touching the file system.
   silent while you send. With `--no-sidetone`, only the phrase is played.
 - Keys go through one table, `Session._keys`, from key to method.
 - `r` (or `n`, Enter) is `roger()`. It asks the `Attempt` for its `Record`,
-  hands it to `Scoreboard.score()` (4.12), prints the phrase dimmed if it
-  was hidden, so you can check your copy, then the verdict and any notes (a
-  run milestone, a rank change, a new best, a QRQ).
+  hands it to `Scoreboard.score()` (4.12), and writes the phrase line: the
+  text, so you can check your copy, the verdict, then any notes.
   Finally it plays your `roger` call (after a Proper Roger) or `ack` call
   (otherwise) and waits for it to end. On a TTY any key cuts it short, and
   `q` still quits. In line mode it just waits, since the next line is the
