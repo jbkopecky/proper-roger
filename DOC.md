@@ -511,8 +511,8 @@ day. From that it prints:
   blank). A day's level comes from its minutes on air (`HEAT_MINUTES`: any,
   5, 10, 20). `heat_cell()` draws it as shade characters `░▒▓█`, since 16
   colours have only two greens; colour adds the hue, and a day off becomes a
-  grey `░░` instead of `··`. The last line is a legend, the streak and a
-  nudge when today has not been played yet.
+  grey `░░` instead of `··`. The last line is the streak, and a nudge when
+  today has not been played yet (no legend: the shades speak for themselves).
 
 ### 4.14 S-meter (`meter_track`, `meter_bar`): `meter`
 

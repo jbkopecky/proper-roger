@@ -21,7 +21,7 @@ Elo 1412 · Ragchewer · 88 to Head copier · 612 phrases on record
   Sep  7  ▒▒ ▓▓ ·· ▒▒ ██ ░░ ··
   Sep 14  ▓▓ ▒▒ ▒▒ ·· ▓▓ ██ ▒▒
   Sep 21  ▒▒ ▓▓ ▓▓ ▒▒ ▓▓ ▒▒ ··
-          less ·· ░░ ▒▒ ▓▓ ██ more   streak 6 days · today: not yet, keep your 6-day streak alive
+          streak 6 days · today: not yet, keep your 6-day streak alive
 
 Exercise 1
 S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶ playing   Elo 1412   r roger  space pause  a agn  s qrs  t peek  q quit
@@ -249,7 +249,7 @@ proper-roger · CW RX rating
   Sep  7  ▒▒ ▒▒ ▒▒ ░░ ░░ ·· ··
   Sep 14  ░░ ░░ ▒▒ ▒▒ ▒▒ ▒▒ ░░
   Sep 21  ▒▒ ░░ ▒▒ ▒▒ ▒▒ ▒▒ ▒▒
-          less ·· ░░ ▒▒ ▓▓ ██ more   streak 14 days · today 7 min
+          streak 14 days · today 7 min
 
   Elo, last 29 days   1197 ▁▄▄▄▄▄▄▅▅▅▅▅▆▆▆▇▇▆▆▇▆▇▆▆▇▇██▆ 1627
 

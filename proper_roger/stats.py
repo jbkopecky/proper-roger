@@ -99,7 +99,6 @@ def heatmap(records, ui: "UI", today: date | None = None, weeks: int = 3) -> lis
             cells.append(heat_cell(heat_level(minutes.get(day)), ui))
         lines.append("  " + ui.paint(f"{monday:%b} {monday.day:>2}", "label") + "  "
                      + " ".join(cells))
-    legend = " ".join(heat_cell(level, ui) for level in range(5))
     current, _ = streaks(minutes, today)
     done_today = minutes.get(today)
     if done_today is not None:
@@ -109,8 +108,7 @@ def heatmap(records, ui: "UI", today: date | None = None, weeks: int = 3) -> lis
     else:
         nudge = ui.paint("today: not yet", "label")
     streak = ui.field("streak", current, plural(current, "day"))
-    lines.append(f"  {'':6}  " + ui.paint("less", "label") + f" {legend} "
-                 + ui.paint("more", "label") + "   " + ui.joined([streak, nudge]))
+    lines.append(f"  {'':6}  " + ui.joined([streak, nudge]))
     return lines
 
 
