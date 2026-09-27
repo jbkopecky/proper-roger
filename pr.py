@@ -21,7 +21,15 @@ if sys.version_info < (3, 11):
     sys.exit("pr.py needs Python 3.11 or newer (it reads config.toml with tomllib); "
              "try: uv run pr.py")
 
-from proper_roger.cli import main  # noqa: E402  (after the version check)
+import os  # noqa: E402  (after the version check)
+
+from proper_roger.cli import main  # noqa: E402
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        # The reader went away (python3 pr.py --stats | head): stop quietly,
+        # and keep Python from failing again when it flushes stdout at exit.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        sys.exit(1)
