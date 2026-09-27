@@ -105,3 +105,19 @@ class CLITests(unittest.TestCase):
     def test_show_hide_text(self):
         self.assertTrue(settings_from_argv(["--show-text"]).show_text)
         self.assertFalse(settings_from_argv(["--show-text", "--hide-text"]).show_text)
+
+
+class OptionTableTests(unittest.TestCase):
+    def test_every_option_is_a_flag_and_a_setting(self):
+        from dataclasses import fields
+        from proper_roger.settings import OPTIONS, Settings, build_parser
+        flags = vars(build_parser().parse_args([]))
+        names = {f.name for f in fields(Settings)}
+        for name in OPTIONS:
+            self.assertIn(name, flags, name)
+            self.assertIn(name, names, name)
+        settings_from_argv([])                     # every default passes its own checks
+
+    def test_clean_wins_over_bad_band_values_in_the_config(self):
+        s = settings_from_argv(["--clean"], {"fist": 60, "qsb": 3})
+        self.assertEqual((s.fist, s.qsb), (0, 0.0))

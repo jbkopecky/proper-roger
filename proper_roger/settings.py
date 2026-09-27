@@ -14,27 +14,43 @@ from .corpus import MODES
 
 DEFAULT_CONFIG = Path(__file__).resolve().parent.parent / "config.toml"  # next to pr.py
 
-BUILTIN_DEFAULTS = {
-    "wpm": 25,           # learn the sound of each character at speed...
-    "farnsworth": 18,    # ...with room between them; None = same as wpm
-    "difficulty": 2,
-    "mode": "mixed",
-    "tone": 600,
-    "volume": 0.5,
-    "player": None,
-    "station": 8,        # phrases from one station before the next, 0 = none
+@dataclass(frozen=True)
+class Option:
+    """A setting shared by the command line and config.toml's [defaults]:
+    its type, its default and what values it takes."""
+    kind: type
+    default: object = None
+    low: float | None = None     # inclusive limits...
+    high: float | None = None
+    unit: str = ""               # ...shown in the message, as in "3000 Hz"
+    choices: tuple = ()          # or a fixed set of values
+
+
+OPTIONS = {
+    "wpm": Option(int, 25, WPM_MIN, WPM_MAX),       # the sound of each character at speed...
+    "farnsworth": Option(int, 18, WPM_MIN, WPM_MAX),  # ...with room between; None = same as wpm
+    "difficulty": Option(int, 2, 1, 5),
+    "mode": Option(str, "mixed", choices=MODES),
+    "tone": Option(int, 600, TONE_MIN, TONE_MAX, " Hz"),
+    "volume": Option(float, 0.5, 0.0, 1.0),
+    "player": Option(str),
+    "station": Option(int, 8, 0),       # phrases from one station before the next, 0 = none
     # Band conditions: a calm, real band by default (--clean turns them off).
-    "fist": 5,           # a discreet human hand
-    "vary": 1,           # each station a little faster or slower, a little off
-    "qsb": 0.2,          # slow, gentle fading
-    "noise": 0.15,       # the soft rush of a quiet band
-    "qrm": 0.0,
-    "filter": 400,       # receiver CW filter, Hz
-    "shape": "soft",     # receiver filter shape: soft | sharp
-    "sidetone": True,    # hear yourself send AGN?, QRS PSE, R R on a perfect keyer
-    "meter": True,       # a live S-meter on the status line (on a terminal)
-    "history": None,     # where your rated phrases go, None = the default place
+    "fist": Option(int, 5, 0, FIST_MAX),     # a discreet human hand
+    "vary": Option(int, 1, 0, VARY_MAX),     # each station a little faster or slower, a little off
+    "qsb": Option(float, 0.2, 0, 1.0),       # slow, gentle fading
+    "noise": Option(float, 0.15, 0, 1.0),    # the soft rush of a quiet band
+    "qrm": Option(float, 0.0, 0, 1.0),
+    "filter": Option(int, 400, FILTER_MIN, FILTER_MAX, " Hz"),   # receiver CW filter
+    "shape": Option(str, "soft", choices=FILTER_SHAPES),
+    "sidetone": Option(bool, True),    # hear yourself send AGN?, QRS PSE, R R
+    "meter": Option(bool, True),       # a live S-meter on the status line (on a terminal)
+    "history": Option(str),            # where your rated phrases go, None = the default place
 }
+BUILTIN_DEFAULTS = {name: option.default for name, option in OPTIONS.items()}
+CLEAN = {"fist": 0, "vary": 0, "qsb": 0.0, "noise": 0.0, "qrm": 0.0}   # --clean
+TYPE_NAMES = {int: "an integer", float: "a number", bool: "true or false", str: "text"}
+
 
 EXPORT_COUNT = 20       # phrases in an --export file without --count
 EXPORT_GAP_SECONDS = 3.0
@@ -151,109 +167,70 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _check(name: str, value, where: str):
+    """``value`` for option ``name`` with its type, limits and choices
+    checked; ``where`` says where it came from, for the message."""
+    option = OPTIONS[name]
+    if value is None:
+        return None
+    kind = option.kind
+    ok = isinstance(value, (int, float) if kind is float else kind)
+    if not ok or (kind is not bool and isinstance(value, bool)):
+        raise CLIError(f"config defaults.{name}: expected {TYPE_NAMES[kind]}, got {value!r}")
+    value = kind(value)
+    if option.choices and value not in option.choices:
+        raise CLIError(f"{where} must be one of {', '.join(option.choices)} (got {value!r})")
+    if option.low is not None and option.high is None and value < option.low:
+        raise CLIError(f"{where} must be >= {option.low} (got {value})")
+    if option.high is not None and not option.low <= value <= option.high:
+        raise CLIError(f"{where} must be between {option.low} and {option.high}{option.unit} "
+                       f"(got {value})")
+    return value
+
+
 def resolve_settings(args: argparse.Namespace, defaults: dict | None = None) -> Settings:
     """Merge CLI arguments, config.toml defaults and built-in defaults; validate."""
-    cfg = dict(BUILTIN_DEFAULTS)
-    for key, value in (defaults or {}).items():
-        if key in cfg:
-            cfg[key] = value
-        else:
+    defaults = defaults or {}
+    for key in defaults:
+        if key not in OPTIONS:
             raise CLIError(f"config defaults: unknown setting {key!r}")
 
-    def pick(name, kind, cli_value):
-        value = cli_value if cli_value is not None else cfg[name]
-        if value is None:
-            return None
-        if kind is int and (not isinstance(value, int) or isinstance(value, bool)):
-            raise CLIError(f"config defaults.{name}: expected an integer, got {value!r}")
-        if kind is float and (isinstance(value, bool) or not isinstance(value, (int, float))):
-            raise CLIError(f"config defaults.{name}: expected a number, got {value!r}")
-        if kind is bool and not isinstance(value, bool):
-            raise CLIError(f"config defaults.{name}: expected true or false, got {value!r}")
-        if kind is str and not isinstance(value, str):
-            raise CLIError(f"config defaults.{name}: expected text, got {value!r}")
-        return kind(value)
-
-    def label(name):
+    def where(name):
         """Where a value came from, for error messages."""
-        if getattr(args, name) is not None:
-            return f"--{name}"
-        if name in (defaults or {}):
+        if getattr(args, name) is None and name in defaults:
             return f"config defaults.{name}"
         return f"--{name}"
 
-    wpm = pick("wpm", int, args.wpm)
-    farnsworth = pick("farnsworth", int, args.farnsworth)
-    if farnsworth is None:
-        farnsworth = wpm
-    elif farnsworth > wpm and args.farnsworth is None and args.wpm is not None:
-        # A Farnsworth default from config.toml follows a slower -w given on
-        # the command line instead of making it an error.
-        farnsworth = wpm
-    difficulty = pick("difficulty", int, args.difficulty)
-    mode = pick("mode", str, args.mode)
-    tone = pick("tone", int, args.tone)
-    volume = pick("volume", float, args.volume)
-    player = pick("player", str, args.player)
-    station = pick("station", int, args.station)
-    fist = pick("fist", int, args.fist)
-    vary = pick("vary", int, args.vary)
-    qsb = pick("qsb", float, args.qsb)
-    noise = pick("noise", float, args.noise)
-    qrm = pick("qrm", float, args.qrm)
-    if args.clean:
-        fist = vary = 0
-        qsb = noise = qrm = 0.0
-    rx_filter_hz = pick("filter", int, args.filter)
-    shape = pick("shape", str, args.shape)
-    sidetone = pick("sidetone", bool, args.sidetone)
-    meter = pick("meter", bool, args.meter)
-    history = pick("history", str, None if args.history is None else str(args.history))
-    history = None if args.no_history else (
-        Path(history).expanduser() if history else default_history_path())
+    values = {}
+    for name, option in OPTIONS.items():
+        cli = getattr(args, name)
+        cli = str(cli) if isinstance(cli, Path) else cli
+        value = cli if cli is not None else defaults.get(name, option.default)
+        if args.clean and name in CLEAN:
+            value = CLEAN[name]   # before the checks: --clean wins over anything
+        values[name] = _check(name, value, where(name))
 
-    if not WPM_MIN <= wpm <= WPM_MAX:
-        raise CLIError(f"{label('wpm')} must be between {WPM_MIN} and {WPM_MAX} (got {wpm})")
-    if not WPM_MIN <= farnsworth <= WPM_MAX:
-        raise CLIError(f"{label('farnsworth')} must be between {WPM_MIN} and {WPM_MAX} "
-                       f"(got {farnsworth})")
+    wpm, farnsworth = values["wpm"], values["farnsworth"]
+    if farnsworth is None or (farnsworth > wpm and args.farnsworth is None
+                              and args.wpm is not None):
+        # No Farnsworth, or a default one that follows a slower -w given on
+        # the command line instead of making it an error.
+        values["farnsworth"] = farnsworth = wpm
     if farnsworth > wpm:
-        raise CLIError(f"{label('farnsworth')} {farnsworth} must be <= {label('wpm')} {wpm}: "
+        raise CLIError(f"{where('farnsworth')} {farnsworth} must be <= {where('wpm')} {wpm}: "
                        "Farnsworth is the effective speed, characters are always sent at "
                        "the character speed")
-    if not 1 <= difficulty <= 5:
-        raise CLIError(f"{label('difficulty')} must be between 1 and 5 (got {difficulty})")
-    if mode not in MODES:
-        raise CLIError(f"{label('mode')} must be one of {', '.join(MODES)} (got {mode!r})")
-    if not TONE_MIN <= tone <= TONE_MAX:
-        raise CLIError(f"{label('tone')} must be between {TONE_MIN} and {TONE_MAX} Hz "
-                       f"(got {tone})")
-    if not 0.0 <= volume <= 1.0:
-        raise CLIError(f"{label('volume')} must be between 0.0 and 1.0 (got {volume})")
-    for name, value, high in (("fist", fist, FIST_MAX), ("vary", vary, VARY_MAX),
-                              ("qsb", qsb, 1.0), ("noise", noise, 1.0), ("qrm", qrm, 1.0)):
-        if not 0 <= value <= high:
-            raise CLIError(f"{label(name)} must be between 0 and {high} (got {value})")
-    if not FILTER_MIN <= rx_filter_hz <= FILTER_MAX:
-        raise CLIError(f"{label('filter')} must be between {FILTER_MIN} and {FILTER_MAX} Hz "
-                       f"(got {rx_filter_hz})")
-    if shape not in FILTER_SHAPES:
-        raise CLIError(f"{label('shape')} must be one of {', '.join(FILTER_SHAPES)} "
-                       f"(got {shape!r})")
-    if station < 0:
-        raise CLIError(f"{label('station')} must be >= 0 (got {station})")
+    history = values["history"]
+    values["history"] = None if args.no_history else (
+        Path(history).expanduser() if history else default_history_path())
     if args.export is not None and args.export.suffix.lower() != ".wav":
         raise CLIError(f"--export needs a .wav file name (got {args.export})")
     if args.count is not None and args.count < 1:
         raise CLIError(f"--count must be >= 1 (got {args.count})")
 
-    return Settings(wpm=wpm, farnsworth=farnsworth, difficulty=difficulty, mode=mode,
-                    tone=tone, volume=volume, count=args.count,
-                    show_text=bool(args.show_text), seed=args.seed, no_play=args.no_play,
-                    config=Path(args.config), player=player, station=station, fist=fist,
-                    vary=vary, qsb=qsb, noise=noise, qrm=qrm, filter=rx_filter_hz,
-                    shape=shape, export=args.export, sidetone=sidetone, history=history,
-                    stats=args.stats, meter=meter)
+    return Settings(**values, count=args.count, show_text=bool(args.show_text), seed=args.seed,
+                    no_play=args.no_play, config=Path(args.config), export=args.export,
+                    stats=args.stats)
 
 
 def settings_from_argv(argv, defaults: dict | None = None) -> Settings:
