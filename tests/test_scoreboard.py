@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from proper_roger.rating import History, RatingModel, Record, phrase_rating
+from proper_roger.rating import History, RatingModel, phrase_rating
 from proper_roger.scoreboard import Attempt, Scoreboard
 
 from .support import calm

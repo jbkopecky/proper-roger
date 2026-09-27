@@ -65,13 +65,14 @@ knowing only what comes before it:
 | `audio`          | `render()`, band conditions, QRM, WAV files                  | 4.4-4.4b |
 | `player`         | the system player, pause / resume                            | 4.5     |
 | `terminal`       | `Keyboard`, `UI`, colours, `clip()`, `KEYS_HELP`             | 4.6, 4.10 |
-| `rating`         | `RatingModel`, `Rating`, `History`                           | 4.12    |
+| `rating`         | `RatingModel`, `Rating`, `Record`, `History`                 | 4.12    |
+| `scoreboard`     | `Attempt` (the phrase on the air), `Scoreboard` (the Elo, this session) | 4.12 |
 | `corpus`         | loading and checking config.toml, `Generator`                | 4.1, 4.7-4.8 |
 | `settings`       | argparse, config defaults, `Settings`                        | 4.9     |
 | `transmitter`    | per-station speed, pitch and strength; your sidetone         | 4.4c    |
 | `meter`          | the S-meter                                                  | 4.14    |
 | `stats`          | `--stats`, the heatmap, next step                            | 4.13    |
-| `session`        | `Session`: one practice session                              | 4.10    |
+| `session`        | `Session`: speeds, QRS, sound, text and the key loop         | 4.10    |
 | `cli`            | `main()`, `--export`, `--stats`                              | 3, 4.11 |
 
 `pr.py` stays at the top so that `python3 pr.py` and `uv run pr.py` work
@@ -90,8 +91,8 @@ main()
   History(--history).load()           unless --no-history / --no-play
   find_player(--player)               unless --no-play
   Session(settings, corpus, Player, history).run()
-     replay the history into a Rating
-     print header, Elo line and key help
+     Scoreboard: replay the history into a Rating
+     print the two header lines, the Elo line and the practice heatmap
      with Keyboard():                 cbreak mode on a TTY
         for each exercise:
            phrase = Generator.next()            new station? -> Transmitter.new_station()
@@ -99,9 +100,9 @@ main()
                                      -> render(text, timing, tone, volume, conditions, rng)
            Player.load(samples, word_starts); Player.play(0)
            loop: redraw status line when state changes, read one key, act
-                 a / s: sidetone call + gap + phrase (or slow + normal)
-                 r: Rating.play(record), History.append(record), verdict,
-                    then your R R on the sidetone
+                 a / s: sidetone call + gap + phrase (s: at a lower Farnsworth)
+                 r: Attempt.record() -> Scoreboard.score(): rate, save;
+                    verdict, then your R R on the sidetone
      print the session summary
 ```
 
@@ -368,12 +369,19 @@ of anything else that uses the global `random` module.
 
 ### 4.9 Settings (`build_parser`, `resolve_settings`): `settings`
 
-Resolution order for every option: command line, then `[defaults]` in
-`config.toml`, then built-in defaults (`BUILTIN_DEFAULTS`). `--farnsworth`
+Every option shared by the command line and `config.toml` is one line of
+the `OPTIONS` table: its type, default, limits or choices, and unit. For
+each, the value comes from the command line, then `[defaults]` in
+`config.toml`, then the table's default (`BUILTIN_DEFAULTS` is derived from
+it), and `_check()` validates it with one set of messages. What remains in
+`resolve_settings()` are the rules that span options: `--farnsworth`
 falls back to the resolved `--wpm`. A `farnsworth` default from the config
 that is above a `-w` given on the command line follows it down instead of
 being an error (`farnsworth = 15` then `-w 12` gives 12/12). `--show-text` /
-`--hide-text` share one destination; hidden is the default.
+`--hide-text` share one destination; hidden is the default. `--clean`
+replaces the band conditions before they are checked, so it wins over
+anything in the config. A test keeps the table, the flags and `Settings`
+in step.
 
 Validation ranges: WPM 5-60 for both speeds, `farnsworth <= wpm`,
 difficulty 1-5, tone 100-3000 Hz, volume 0.0-1.0, count >= 1, station
@@ -388,10 +396,15 @@ touching the file system.
 
 ### 4.10 Session and UI (`Session`, `UI`): `session`, `terminal`
 
-- The header line is `18 WPM · Farnsworth 15 · Difficulty 3 · Mixed`;
-  `Farnsworth` is omitted when it equals the character speed, active band
-  conditions are appended (`fist 10% · vary ±2 · QSB 0.5`), and `no audio`
-  under `--no-play`.
+- The header is two lines, each under 80 columns. `speed_line()`:
+  `25 WPM · Farnsworth 18 · Difficulty 3 · Mixed` (`Farnsworth` omitted
+  when it equals the character speed, `(QRS, yours is 18)` during a QRS,
+  `no audio` under `--no-play`). `band_line()`: the active conditions
+  (`fist 5% · vary ±1 · QSB 0.2 · noise 0.15 · filter 400 Hz soft`), or
+  `perfect keyer, silent band`. A speed change reprints only the first.
+  Names are grey and values bold (`UI.field`).
+- There is no key list at start-up: the status line carries the quick keys
+  and `? help`; `h` or `?` prints `KEYS_HELP`.
 - Each exercise title is `Exercise N`, or `Exercise N · new station` when
   the generator starts a new station (never for the first exercise).
 - One status line (`▶ playing...`, `⏸ paused`, `■ done` plus the key hints)
@@ -428,16 +441,18 @@ touching the file system.
   buffer. The buffer has word marks for every part, so pause/resume still
   work inside it. Because it is one buffer, the "receiver" is naturally
   silent while you send. With `--no-sidetone`, only the phrase is played.
-- `r` (or `n`, Enter) is `roger()`. It prints the phrase dimmed if it was hidden,
-  so you can check your copy, then scores and saves it (4.12) and prints the
-  verdict and any notes (a run milestone, a rank change, a new best).
+- Keys go through one table, `Session._keys`, from key to method.
+- `r` (or `n`, Enter) is `roger()`. It asks the `Attempt` for its `Record`,
+  hands it to `Scoreboard.score()` (4.12), prints the phrase dimmed if it
+  was hidden, so you can check your copy, then the verdict and any notes (a
+  run milestone, a rank change, a new best, a QRQ).
   Finally it plays your `roger` call (after a Proper Roger) or `ack` call
   (otherwise) and waits for it to end. On a TTY any key cuts it short, and
   `q` still quits. In line mode it just waits, since the next line is the
   next command.
 - A phrase is rated at the easiest speeds it was *heard* at:
-  `_note_heard()` runs after each render and keeps the record with the
-  lowest D. So `-` to copy a phrase is free, but it is not a free win at
+  `_send_phrase()` renders it and hands a `Record` of how it was sent to
+  `Attempt.hear()`, which keeps the one with the lowest D. So `-` to copy a phrase is free, but it is not a free win at
   the harder speed. Speeds are the ones the station actually sent (with
   `--vary`); `set_wpm`/`set_fw` keep what you chose, for `--stats`.
 - Quitting (`q`, Esc, Ctrl-C, Ctrl-D, EOF) always goes through `finally`:
@@ -470,15 +485,25 @@ session.
   `Game` with D, before/after, whether it was a Proper Roger, whether it is
   a new best (only once settled, so the first session does not spam it), and
   the ranks before and after. Runs of Proper Rogers are counted from the
-  records by `longest_run()`, and live by the session for its milestones.
+  records by `longest_run()`, and live by the scoreboard for its milestones.
+- `scoreboard.Attempt` is the phrase on the air: its text, the AGNs, QRSs
+  and peek, the easiest `Record` heard, when it started. `record(when)`
+  turns it into the history line. `scoreboard.Scoreboard` replays the
+  history into a `Rating` at start, then `score(rec)` counts each phrase,
+  keeps the run of Proper Rogers, and on the record rates and appends it.
+  A failed save is kept for `take_error()`, the same pattern as `Player`,
+  and the session prints it once. Neither makes a sound or prints a line.
 - `RatingModel` is a frozen dataclass whose defaults match config.toml's
   `[rating]`. `rating_model_from()` accepts only known fields, checks the
   types and ranges, and sorts `ranks`.
-- `History` is JSON Lines. A record holds what is needed to re-rate the
-  phrase (`wpm`, `fw`, `level`, `words`, the conditions), how it was copied
-  (`agn`, `qrs`, `peek`, `secs`), the setup chosen (`set_wpm`, `set_fw`,
-  `mode`), a local ISO timestamp with offset, and the `text`. It never holds
-  a rating. Appending opens, writes one line and closes, so a crash loses at
+- `History` is JSON Lines, one `Record` per line. A `Record` is a frozen
+  dataclass holding what is needed to re-rate the phrase (`wpm`, `fw`,
+  `level`, `words`, the conditions), how it was copied (`agn`, `qrs`,
+  `peek`, `secs`), the setup chosen (`set_wpm`, `set_fw`, `mode`), a local
+  ISO timestamp with offset, and the `text`. It never holds a rating. Its
+  properties answer the questions the stats ask: `proper`, `day`, `setup`.
+  `Record.from_json()` ignores keys it does not know and fills missing ones
+  with their defaults, so history files from older and newer versions load. Appending opens, writes one line and closes, so a crash loses at
   most the phrase in flight. Unreadable lines are skipped and counted, never
   fatal. A failed append is one `warning:` line and the session goes on.
 - The default path follows each platform's convention
@@ -486,7 +511,7 @@ session.
   `XDG_STATE_HOME` or `~/.local/state` on Linux, `LOCALAPPDATA` on Windows.
   It is state, not configuration: it is not kept next to `pr.py`.
 - Off the record: `--no-history` or `--no-play` (no `History` at all), and
-  `--show-text` (a `History` exists but `Session.rated` is false and no
+  `--show-text` (a `History` exists but `Scoreboard.rated` is false and no
   verdict is printed: reading along is not copying). Quitting mid-phrase
   does not rate it.
 
@@ -643,6 +668,10 @@ python3 -m unittest -v
 | keyboard      | through an `os.pipe()`: lone Esc, arrow/function sequences ignored, plain keys, timeout (POSIX) |
 | session       | scripted line-mode sessions: count is honoured, reveal prints the seeded phrase, speed keys update the header, EOF quits; Farnsworth kept across `-`/`+`, status line, player warning, key help, slow then normal replay, new-station titles, header and reveal with conditions |
 | sidetone      | AGN = dry sidetone then the phrase as heard, below the received level; calls come from the config and are checked for Morse; `--no-sidetone` just replays; `sidetone` in config and on the CLI |
+| scoreboard    | an attempt keeps its easiest hearing and records what you did; off the record counts but rates nothing; the history is replayed, then each phrase rated and saved; runs and milestones; a failed save is reported once |
+| records       | a 0.3 history line loads and round-trips; unknown keys ignored, missing ones defaulted; bad lines refused; the setup is what you chose |
+| look          | the header is two lines under 80 columns even with every condition at its widest and during a QRS; `--clean` reads "perfect keyer"; no key list until `?` |
+| options table | every option is a flag and a `Settings` field, every default passes its own checks, `--clean` wins over bad band values in the config |
 | rating        | the base phrase is exactly 1000, the README worked example (1422; +13 / +1 / -4 / -11), every term makes a phrase harder in the right direction and Farnsworth spacing weighs more than character speed, S values, a draw at equal ratings moves nothing, provisional K is double, runs, rank up and bests, the floor, `rank_for`, config overrides and every rejected value |
 | history       | round trip, bad lines skipped and counted, missing file, default path per platform, `--history`, `--no-history`, `~` in config |
 | rated session | outcomes recorded per key sequence and shown after the Roger; calls echoed; rating carried over between sessions; quitting does not rate; tuning the speed down is free and rated at the slowest; space pauses while playing and is an AGN once done; read-along is off the record; run milestones, rank up and best within a session; a save error warns once |

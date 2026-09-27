@@ -14,7 +14,8 @@ shows you whether you're building the habit.
 $ python3 pr.py -d 3
 
 CW Ragchew RX
-25 WPM · Farnsworth 18 · Difficulty 3 · Mixed · fist 5% · vary ±1 · QSB 0.2 · noise 0.15 · filter 400 Hz soft
+25 WPM · Farnsworth 18 · Difficulty 3 · Mixed
+fist 5% · vary ±1 · QSB 0.2 · noise 0.15 · filter 400 Hz soft
 Elo 1412 · Ragchewer · 88 to Head copier · 612 phrases on record
 
           Mo Tu We Th Fr Sa Su
@@ -24,7 +25,7 @@ Elo 1412 · Ragchewer · 88 to Head copier · 612 phrases on record
           streak 6 days · today: not yet, keep your 6-day streak alive
 
 Exercise 1
-S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶ playing   Elo 1412   r roger  space pause  a agn  s qrs  t peek  q quit
+S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶ playing  Elo 1412  r roger  space pause  a agn  s qrs  t peek  q quit  ? help
 NAME HR IS STEVE AND QTH IS GRENOBLE
 ✓ PROPER ROGER   +17  → Elo 1429   phrase 1579
   ★ 5 Proper Rogers in a row
@@ -118,7 +119,8 @@ on Windows. You can also pass any other command with `--player "cmd"`.
 | `h`, `?`         |           | show this key list                                           |
 | `q`, Esc         |           | quit (the phrase you were on is not scored)                  |
 
-Keys act at once, with no Enter needed, on macOS, Linux and Windows
+The status line always shows the quick keys; press `?` (or `h`) for the full
+list. Keys act at once, with no Enter needed, on macOS, Linux and Windows
 terminals. Any key cuts your `R R` short if you're in a hurry.
 
 ## Talk back: AGN?, QRS, R R
@@ -569,7 +571,7 @@ Template rules:
 ## Under the hood
 
 ```bash
-python3 -m unittest -v     # 135 tests, a few seconds
+python3 -m unittest -v     # 149 tests, a few seconds
 ```
 
 The code is in `proper_roger/`, one plain module per concern (Morse
