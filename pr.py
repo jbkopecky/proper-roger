@@ -24,6 +24,7 @@ import argparse
 import array
 import cmath
 import functools
+import json
 import math
 import os
 import random
@@ -35,16 +36,17 @@ import tempfile
 import time
 import tomllib
 import wave
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 DEFAULT_CONFIG = Path(__file__).resolve().with_name("config.toml")
 
 BUILTIN_DEFAULTS = {
-    "wpm": 18,
-    "farnsworth": None,  # None = same as wpm
+    "wpm": 25,           # learn the sound of each character at speed...
+    "farnsworth": 18,    # ...with room between them; None = same as wpm
     "difficulty": 2,
     "mode": "mixed",
     "tone": 600,
@@ -59,6 +61,9 @@ BUILTIN_DEFAULTS = {
     "qrm": 0.0,
     "filter": 400,       # receiver CW filter, Hz
     "shape": "soft",     # receiver filter shape: soft | sharp
+    "sidetone": True,    # hear yourself send AGN?, QRS PSE, R R on a perfect keyer
+    "meter": True,       # a live S-meter on the status line (on a terminal)
+    "history": None,     # where your rated phrases go, None = the default place
 }
 WPM_MIN, WPM_MAX = 5, 60
 TONE_MIN, TONE_MAX = 100, 3000
@@ -69,17 +74,26 @@ FILTER_MIN, FILTER_MAX = 100, 1000   # Hz
 EXPORT_COUNT = 20       # phrases in an --export file without --count
 EXPORT_GAP_SECONDS = 3.0
 MODES = ("blocks", "phrases", "mixed")
+
+# Colours: only the 16 standard ANSI colours, so they follow your terminal's
+# own scheme. heat0-4 colour the practice heatmap; meter/over/off the
+# S-meter segments (up to S9, over S9, unlit); tx the meter while you send.
+STYLES = {"good": "1;32", "ok": "33", "bad": "31", "bold": "1", "dim": "2",
+          "up": "32", "down": "31", "heat0": "90", "heat1": "2;32", "heat2": "32",
+          "heat3": "92", "heat4": "1;92", "meter": "32", "over": "91", "off": "90",
+          "tx": "1;31"}
 SAMPLE_RATE = 16000
 
 KEYS_HELP = """\
 keys during a session:
-  space   pause / resume (replay once the phrase has finished)
-  r       replay the phrase from the beginning
-  t       reveal / hide the text
-  n       next phrase (Enter works too)
+  r       Roger: you copied it, next phrase (n and Enter work too)
+  a       AGN?  ask for a repeat, the phrase plays again
+  s       QRS   ask for slower: more space between characters, and the
+          station stays slower, speeding up again as you copy
+  space   pause / resume (AGN? once the phrase has finished)
+  t       reveal / hide the text (a peek scores nothing)
   + / -   character speed +/- 1 WPM
   ] / [   Farnsworth effective speed +/- 1 WPM
-  s       slow replay: stretched spacing first, then at full speed
   h / ?   show this key list
   q / Esc quit"""
 
@@ -798,6 +812,14 @@ class Corpus:
     defaults: dict       # CLI defaults from the file
     path: Path | None = None
     station_keys: tuple = ()  # placeholders that stay fixed for one station
+    sidetone: dict | None = None        # what you send: agn, qrs, roger, ack
+    rating: "RatingModel | None" = None  # the Elo weights
+
+    def __post_init__(self):
+        if self.sidetone is None:
+            self.sidetone = {k: list(v) for k, v in SIDETONE_DEFAULTS.items()}
+        if self.rating is None:
+            self.rating = RatingModel()
 
 
 def load_corpus(path) -> Corpus:
@@ -842,7 +864,10 @@ def corpus_from_data(data, path=None) -> Corpus:
     if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
         raise CorpusError("station.keys: expected a list of placeholder names")
     station_keys = tuple(k.lower() for k in keys)
-    corpus = Corpus(vocab, ranges, blocks, phrases, defaults, path, station_keys)
+    sidetone = _sidetone_calls(_section(data, "sidetone"))
+    rating = rating_model_from(_section(data, "rating"))
+    corpus = Corpus(vocab, ranges, blocks, phrases, defaults, path, station_keys,
+                    sidetone, rating)
     _validate_corpus(corpus)
     return corpus
 
@@ -854,6 +879,25 @@ def _section(data: dict, name: str) -> dict:
     if not isinstance(value, dict):
         raise CorpusError(f"{name}: expected a mapping")
     return value
+
+
+def _sidetone_calls(section: dict) -> dict:
+    calls = {k: list(v) for k, v in SIDETONE_DEFAULTS.items()}
+    for key, values in section.items():
+        if key not in calls:
+            raise CorpusError(f"sidetone: unknown entry {key!r} "
+                              f"(expected {', '.join(SIDETONE_DEFAULTS)})")
+        if (not isinstance(values, list) or not values
+                or not all(isinstance(v, str) and v.strip() for v in values)):
+            raise CorpusError(f"sidetone.{key}: expected a non-empty list of texts")
+        values = [" ".join(v.upper().split()) for v in values]
+        for value in values:
+            bad = unsupported_chars(value)
+            if bad:
+                raise CorpusError(f"sidetone.{key}: {value!r} uses characters "
+                                  f"without Morse code: {''.join(bad)!r}")
+        calls[key] = values
+    return calls
 
 
 def _templates(section: dict, name: str) -> dict:
@@ -995,6 +1039,461 @@ class Generator:
 
 
 # ----------------------------------------------------------------------------
+# Your CW RX rating (Elo), and the history it is computed from
+# ----------------------------------------------------------------------------
+#
+# Every phrase is an opponent with its own rating D, from how it was sent:
+# speed, Farnsworth, language level, length and band conditions. You are
+# rated R. How you copied it is the result of the game: 1 for a Proper Roger,
+# less after an AGN or a QRS, 0 after a peek. Then plain Elo:
+#
+#     E = 1 / (1 + 10^((D - R) / 400))      R <- R + K (S - E)
+#
+# The history keeps what was heard and how it was copied, never a rating, so
+# the whole curve is recomputed at start-up: change a weight in config.toml
+# and every phrase you ever copied is priced again.
+
+SIDETONE_DEFAULTS = {
+    "agn": ("AGN?", "PSE AGN"),     # r: a repeat, please
+    "qrs": ("QRS PSE", "PSE QRS"),  # s: slower, please
+    "roger": ("R R", "R FB", "FB"),  # n after a Proper Roger
+    "ack": ("R", "OK"),             # n after an AGN, a QRS or a peek
+}
+SIDETONE_GAP_SECONDS = 0.6   # between your request and the other station
+QRS_STEP_WPM = 3             # a QRS takes this off the Farnsworth (effective) speed...
+QRQ_STEP_WPM = 1             # ...and every Proper Roger after it gives this back
+SIDETONE_LEVEL = 0.8         # your sidetone, a little under the received signal
+
+DEFAULT_RANKS = (
+    (0, "SWL"), (900, "Novice"), (1100, "Pencil copier"), (1300, "Ragchewer"),
+    (1500, "Head copier"), (1700, "Brass pounder"), (1900, "Old timer"), (2100, "Legend"),
+)
+RUN_MILESTONES = (5, 10, 25, 50, 100)
+
+
+@dataclass(frozen=True)
+class RatingModel:
+    """The Elo weights; every field can be set in config.toml's [rating]."""
+    start: float = 1000.0         # your rating before your first phrase
+    base: float = 1000.0          # a phrase at speed_ref, level 1, words_ref words, clean band
+    speed_ref: float = 15.0       # WPM
+    speed: float = 500.0          # points per doubling of the blended speed
+    farnsworth_share: float = 0.7  # blended speed = wpm^(1 - share) x farnsworth^share
+    level: float = 120.0          # points per language level above 1
+    words_ref: float = 3.0
+    words: float = 40.0           # points per doubling of the number of words
+    fist: float = 4.0             # points per % of --fist
+    qsb: float = 100.0            # at --qsb 1
+    noise: float = 200.0          # at --noise 1 through a 400 Hz filter
+    qrm: float = 150.0            # at --qrm 1
+    vary: float = 10.0            # per WPM of --vary
+    scale: float = 400.0          # Elo: 400 points apart = 10 to 1 odds
+    k: float = 24.0
+    k_provisional: float = 48.0
+    provisional: int = 50         # your first phrases move the rating faster
+    floor: float = 100.0
+    agn: float = 0.5              # result of a Roger after one AGN: a draw
+    qrs: float = 0.5              # after one QRS: a repeat too, and rated at the slower speed
+    extra: float = 0.15           # taken off for every further AGN or QRS
+    ranks: tuple = DEFAULT_RANKS
+
+
+def rating_model_from(section: dict) -> RatingModel:
+    """A RatingModel from config.toml's [rating] section."""
+    known = {f.name: f for f in fields(RatingModel)}
+    changes = {}
+    for key, value in section.items():
+        if key not in known:
+            raise CorpusError(f"rating: unknown setting {key!r}")
+        if key == "ranks":
+            changes[key] = _ranks(value)
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise CorpusError(f"rating.{key}: expected a number, got {value!r}")
+        if key == "provisional":
+            if not isinstance(value, int) or value < 0:
+                raise CorpusError(f"rating.provisional: expected an integer >= 0, got {value!r}")
+        elif value < 0 or (key in ("speed_ref", "words_ref", "scale") and value == 0):
+            raise CorpusError(f"rating.{key}: must be positive, got {value!r}")
+        changes[key] = value if key == "provisional" else float(value)
+    if not 0 <= changes.get("farnsworth_share", 0) <= 1:
+        raise CorpusError("rating.farnsworth_share: must be between 0 and 1")
+    return replace(RatingModel(), **changes)
+
+
+def _ranks(value) -> tuple:
+    ok = isinstance(value, list) and value and all(
+        isinstance(r, dict) and set(r) == {"at", "name"} and isinstance(r["name"], str)
+        and isinstance(r["at"], (int, float)) and not isinstance(r["at"], bool)
+        for r in value)
+    if not ok:
+        raise CorpusError('rating.ranks: expected a list of { at = 1300, name = "Ragchewer" }')
+    return tuple(sorted((r["at"], r["name"]) for r in value))
+
+
+def rank_for(model: RatingModel, value: float):
+    """``(name, next_name, next_at)`` for a rating; the next rank is None at the top."""
+    name, following = model.ranks[0][1], None
+    for at, rank in model.ranks:
+        if value >= at:
+            name = rank
+        elif following is None:
+            following = (rank, at)
+    return (name,) + (following or (None, None))
+
+
+def phrase_rating(model: RatingModel, rec: dict) -> float:
+    """D: how hard a phrase was to copy, sent the way ``rec`` says."""
+    wpm = rec["wpm"]
+    fw = rec.get("fw", wpm)
+    share = model.farnsworth_share
+    blended = wpm ** (1.0 - share) * fw ** share
+    words = max(1, rec.get("words", 1))
+    return (model.base
+            + model.speed * math.log2(blended / model.speed_ref)
+            + model.level * (rec.get("level", 1) - 1)
+            + model.words * math.log2(words / model.words_ref)
+            + model.fist * rec.get("fist", 0)
+            + model.qsb * rec.get("qsb", 0.0)
+            + model.noise * rec.get("noise", 0.0) * math.sqrt(rec.get("filter", 400) / 400)
+            + model.qrm * rec.get("qrm", 0.0)
+            + model.vary * rec.get("vary", 0))
+
+
+def copy_result(model: RatingModel, agn: int = 0, qrs: int = 0, peek: bool = False) -> float:
+    """S: 1 for a Proper Roger, less for every AGN or QRS, 0 after a peek."""
+    if peek:
+        return 0.0
+    asks = agn + qrs
+    if not asks:
+        return 1.0
+    first = model.qrs if qrs else model.agn
+    return max(0.0, first - model.extra * (asks - 1))
+
+
+@dataclass(frozen=True)
+class Game:
+    """One rated phrase."""
+    d: float          # the phrase's rating
+    s: float          # your result
+    e: float          # the result Elo expected
+    before: float
+    after: float
+    proper: bool      # a Proper Roger: no AGN, no QRS, no peek
+    run: int          # Proper Rogers in a row, this one included
+    new_best: bool
+    rank_before: str
+    rank_after: str
+
+    @property
+    def delta(self) -> int:
+        return round(self.after) - round(self.before)
+
+
+class Rating:
+    """Your Elo, played phrase by phrase."""
+
+    def __init__(self, model: RatingModel):
+        self.model = model
+        self.value = model.start
+        self.count = 0
+        self.best = None
+        self.run = 0
+        self.best_run = 0
+
+    @property
+    def provisional(self) -> bool:
+        return self.count < self.model.provisional
+
+    def expected(self, d: float) -> float:
+        return 1.0 / (1.0 + 10.0 ** ((d - self.value) / self.model.scale))
+
+    def label(self) -> str:
+        """``1412``, or ``1043?`` while provisional."""
+        return f"{round(self.value)}{'?' if self.provisional else ''}"
+
+    def play(self, rec: dict) -> Game:
+        model = self.model
+        d = phrase_rating(model, rec)
+        agn, qrs, peek = rec.get("agn", 0), rec.get("qrs", 0), bool(rec.get("peek"))
+        s = copy_result(model, agn, qrs, peek)
+        e = self.expected(d)
+        k = model.k_provisional if self.provisional else model.k
+        before = self.value
+        after = max(model.floor, before + k * (s - e))
+        self.value = after
+        self.count += 1
+        proper = not (agn or qrs or peek)
+        self.run = self.run + 1 if proper else 0
+        self.best_run = max(self.best_run, self.run)
+        new_best = (not self.provisional and self.best is not None
+                    and round(after) > round(self.best))
+        self.best = after if self.best is None else max(self.best, after)
+        return Game(d, s, e, before, after, proper, self.run, new_best,
+                    rank_for(model, before)[0], rank_for(model, after)[0])
+
+
+def default_history_path() -> Path:
+    """Where the history lives unless --history says otherwise."""
+    home = Path.home()
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
+    elif sys.platform == "darwin":
+        base = home / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_STATE_HOME") or home / ".local" / "state")
+    return base / "proper-roger" / "history.jsonl"
+
+
+class History:
+    """Your rated phrases, one JSON object per line, oldest first."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.records: list = []
+        self.skipped = 0   # lines that could not be read
+
+    def load(self) -> "History":
+        try:
+            text = self.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return self
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+                if not isinstance(rec, dict) or not isinstance(rec.get("t"), str):
+                    raise ValueError
+                datetime.fromisoformat(rec["t"])
+                if not (isinstance(rec.get("wpm"), (int, float)) and rec["wpm"] > 0
+                        and rec.get("fw", 1) > 0):
+                    raise ValueError
+            except (ValueError, TypeError):
+                self.skipped += 1
+                continue
+            self.records.append(rec)
+        return self
+
+    def append(self, rec: dict) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+        self.records.append(rec)
+
+
+def speed_label(wpm, fw) -> str:
+    return f"{wpm}" if wpm == fw else f"{wpm}/{fw}"
+
+
+def _day(rec: dict) -> date:
+    return datetime.fromisoformat(rec["t"]).date()
+
+
+def streaks(days, today: date):
+    """``(current, best)`` runs of consecutive days with practice. Today
+    not played yet does not break the current streak."""
+    days = set(days)
+    best = run = 0
+    for day in sorted(days):
+        run = run + 1 if day - timedelta(days=1) in days else 1
+        best = max(best, run)
+    current = 0
+    day = today if today in days else today - timedelta(days=1)
+    while day in days:
+        current += 1
+        day -= timedelta(days=1)
+    return current, best
+
+
+def sparkline(values, blocks: str) -> str:
+    if not values:
+        return ""
+    low, high = min(values), max(values)
+    if high - low < 1:
+        return blocks[len(blocks) // 2] * len(values)
+    top = len(blocks) - 1
+    return "".join(blocks[round((v - low) / (high - low) * top)] for v in values)
+
+
+def bar(fraction: float, width: int, sym: dict) -> str:
+    filled = round(max(0.0, min(1.0, fraction)) * width)
+    return sym["full"] * filled + sym["empty"] * (width - filled)
+
+
+def setup_of(rec: dict):
+    """``(level, wpm, farnsworth)`` you chose, not what a --vary station sent."""
+    wpm = rec.get("set_wpm", rec["wpm"])
+    return rec.get("level", 1), wpm, rec.get("set_fw", rec.get("fw", wpm))
+
+
+def next_step(records: list) -> str:
+    """What to try next, from the last 50 phrases at your latest setup."""
+    setup = setup_of(records[-1])
+    recent = [r for r in records if setup_of(r) == setup][-50:]
+    level, wpm, fw = setup
+    where = f"d{level} {speed_label(wpm, fw)}"
+    if len(recent) < 20:
+        return (f"{20 - len(recent)} more phrases at {where} and I can tell you "
+                "what to try next")
+    rate = sum(1 for r in recent if _proper(r)) / len(recent)
+    pct = f"{rate:.0%} Proper Rogers over your last {len(recent)} at {where}"
+    if rate >= 0.8:
+        options = []
+        if level < 5:
+            options.append(f"-d {level + 1}")
+        if fw < wpm:
+            options.append(f"-f {min(wpm, fw + 2)}")
+        elif wpm + 2 <= WPM_MAX:
+            options.append(f"-w {wpm + 2}")
+        return f"{pct}: time to step up, try {' or '.join(options)}"
+    if rate < 0.4:
+        options = []
+        if fw - 2 >= WPM_MIN:
+            options.append(f"-f {fw - 2}")
+        if level > 1:
+            options.append(f"-d {level - 1}")
+        easier = f", or ease off with {' or '.join(options)}" if options else ""
+        return f"{pct}: a stretch. Stay if you like the fight{easier}"
+    return f"{pct}: the sweet spot, stay here, this is where you learn fastest"
+
+
+def _proper(rec: dict) -> bool:
+    return not (rec.get("agn") or rec.get("qrs") or rec.get("peek"))
+
+
+HEAT_MINUTES = (5, 10, 20)   # a day under 5 min is level 1, then 2, 3, and 4 from 20 min
+
+
+def day_minutes(records) -> dict:
+    """Minutes on air per day."""
+    minutes = {}
+    for rec in records:
+        day = _day(rec)
+        minutes[day] = minutes.get(day, 0.0) + rec.get("secs", 0) / 60
+    return minutes
+
+
+def heat_level(minutes: float | None) -> int:
+    if minutes is None:
+        return 0
+    return 1 + sum(1 for m in HEAT_MINUTES if minutes >= m)
+
+
+def heatmap(records, ui: "UI", today: date | None = None, weeks: int = 3) -> list:
+    """A practice calendar, one row per week, Monday first: build the habit."""
+    today = today or date.today()
+    minutes = day_minutes(records)
+    sym = ui.sym
+    solid = ui.color   # coloured blocks, else shades
+    first = today - timedelta(days=today.weekday(), weeks=weeks - 1)
+    lines = [f"  {'':6}  " + " ".join(d for d in ("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"))]
+    for week in range(weeks):
+        monday = first + timedelta(weeks=week)
+        cells = []
+        for offset in range(7):
+            day = monday + timedelta(days=offset)
+            if day > today:
+                cells.append("  ")
+                continue
+            level = heat_level(minutes.get(day))
+            cell = sym["heat"][level] if not solid or not level else sym["full"] * 2
+            cells.append(ui.paint(cell, f"heat{level}"))
+        lines.append(f"  {monday:%b} {monday.day:>2}  " + " ".join(cells))
+    legend = " ".join(ui.paint(sym["heat"][lvl] if not solid or not lvl else sym["full"] * 2,
+                               f"heat{lvl}") for lvl in range(5))
+    current, _ = streaks(minutes, today)
+    done_today = minutes.get(today)
+    if done_today is not None:
+        nudge = f"today {max(1, round(done_today))} min"
+    elif current:
+        nudge = ui.paint(f"today: not yet, keep your {current}-day streak alive", "bold")
+    else:
+        nudge = "today: not yet"
+    streak = f"streak {current} day{'s' if current != 1 else ''}"
+    lines.append(f"  {'':6}  less {legend} more   {streak} {sym['dot']} {nudge}")
+    return lines
+
+
+def stats_report(history: History, model: RatingModel, ui: "UI",
+                 today: date | None = None) -> list:
+    """The lines of ``--stats``."""
+    sym = ui.sym
+    today = today or date.today()
+    records = history.records
+    lines = ["proper-roger · CW RX rating".replace("·", sym["dot"]), ""]
+    if not records:
+        return lines + [
+            "No phrases on record yet. Play a session: every phrase you Roger",
+            f"with r is rated, and your Elo starts at {round(model.start)}.",
+            "", f"history: {history.path}"]
+    rating = Rating(model)
+    by_day = {}
+    for rec in records:
+        by_day[_day(rec)] = rating.play(rec).after
+    rank, following, at = rank_for(model, rating.value)
+    best = f"   best {round(rating.best)}"
+    lines.append(f"  Elo {rating.label()}   {rank}{best}")
+    if following:
+        floor = max((a for a, _ in model.ranks if a <= rating.value), default=model.ranks[0][0])
+        fraction = (rating.value - floor) / (at - floor)
+        lines.append(f"  {rank} {bar(fraction, 24, sym)} {following}"
+                     f"  {math.ceil(at - rating.value)} to go")
+    else:
+        lines.append(f"  {sym['star']} top of the ladder")
+    if rating.provisional:
+        left = model.provisional - rating.count
+        lines.append(f"  provisional: {left} more phrases before it settles")
+    lines.append("")
+    seconds = sum(r.get("secs", 0) for r in records)
+    hours, minutes = divmod(int(seconds // 60), 60)
+    on_air = f"{hours} h {minutes:02d} min" if hours else f"{minutes} min"
+    proper = sum(1 for r in records if _proper(r))
+    last50 = records[-50:]
+    recent = sum(1 for r in last50 if _proper(r)) / len(last50)
+    current, best_streak = streaks(by_day, today)
+    d = sym["dot"]
+    lines.append(f"  {len(records)} phrase{"s" if len(records) != 1 else ""} {d} {on_air} on air {d} "
+                 f"{proper / len(records):.0%} Proper Rogers ({recent:.0%} in the last {len(last50)})")
+    lines.append(f"  streak {current} day{'s' if current != 1 else ''} {d} best {best_streak} "
+                 f"{d} longest run {rating.best_run} Proper Roger{'s' if rating.best_run != 1 else ''} in a row")
+    # One character per day over the last 30, a day off keeps yesterday's value.
+    first = min(by_day)
+    start = max(first, today - timedelta(days=29))
+    values, value = [], None
+    for day in sorted(by_day):
+        if day < start:
+            value = by_day[day]
+    day = start
+    while day <= today:
+        value = by_day.get(day, value)
+        if value is not None:
+            values.append(value)
+        day += timedelta(days=1)
+    lines += [""] + heatmap(records, ui, today)
+    if len(values) > 1:
+        lines += ["", f"  Elo, last {len(values)} days   {round(min(values))} "
+                      f"{sparkline(values, sym['blocks'])} {round(max(values))}"]
+    # Setups played in the last 30 days.
+    groups = {}
+    for rec in records:
+        if _day(rec) >= today - timedelta(days=29):
+            groups.setdefault(setup_of(rec), []).append(rec)
+    if groups:
+        lines += ["", "  last 30 days   level  speed   phrases  Proper Roger  phrase Elo"]
+        top = sorted(groups.items(), key=lambda kv: -len(kv[1]))[:6]
+        for (level, wpm, fw), recs in top:
+            rate = sum(1 for r in recs if _proper(r)) / len(recs)
+            avg = sum(phrase_rating(model, r) for r in recs) / len(recs)
+            lines.append(f"                 d{level:<4}  {speed_label(wpm, fw):<7} {len(recs):>7}"
+                         f"  {rate:>9.0%}     {round(avg):>6}")
+    lines += ["", f"  next: {next_step(records)}", "", f"history: {history.path}"]
+    if history.skipped:
+        lines.append(f"warning: {history.skipped} unreadable lines skipped")
+    return lines
+
+
+# ----------------------------------------------------------------------------
 # CLI
 # ----------------------------------------------------------------------------
 
@@ -1025,6 +1524,10 @@ class Settings:
     filter: int = 400
     shape: str = "soft"
     export: Path | None = None
+    sidetone: bool = True
+    meter: bool = True
+    history: Path | None = None   # None: off the record, nothing rated
+    stats: bool = False
 
     @property
     def conditions(self) -> Conditions:
@@ -1039,9 +1542,9 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=KEYS_HELP,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("-w", "--wpm", type=int, metavar="N",
-                   help="character speed in WPM (default 18)")
+                   help="character speed in WPM (default 25)")
     p.add_argument("-f", "--farnsworth", type=int, metavar="N",
-                   help="effective speed in WPM, must be <= --wpm (default: same as --wpm)")
+                   help="effective speed in WPM, <= --wpm (default 18, or --wpm when lower)")
     p.add_argument("-d", "--difficulty", type=int, metavar="1-5",
                    help="language difficulty, independent from speed (default 2)")
     p.add_argument("-m", "--mode", choices=MODES,
@@ -1077,6 +1580,20 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--shape", choices=FILTER_SHAPES,
                    help="receiver filter shape: soft = round, no ringing (default); "
                         "sharp = steep skirts against QRM, but rings")
+    r = p.add_argument_group("your rating")
+    r.add_argument("--stats", action="store_true",
+                   help="show your Elo, streak, progress and what to try next, then exit")
+    r.add_argument("--sidetone", dest="sidetone", action="store_true", default=None,
+                   help="hear yourself send AGN?, QRS PSE and R R on a perfect keyer (default)")
+    r.add_argument("--no-sidetone", dest="sidetone", action="store_false",
+                   help="requests are silent, the phrase just plays again")
+    r.add_argument("--meter", dest="meter", action="store_true", default=None,
+                   help="a live S-meter on the status line (default)")
+    r.add_argument("--no-meter", dest="meter", action="store_false", help="no S-meter")
+    r.add_argument("--history", type=Path, metavar="FILE",
+                   help=f"where rated phrases are kept (default {default_history_path()})")
+    r.add_argument("--no-history", action="store_true",
+                   help="off the record: nothing rated, nothing saved")
     p.add_argument("--export", type=Path, metavar="FILE.wav",
                    help=f"write --count phrases (default {EXPORT_COUNT}) to a WAV file and "
                         "their text to FILE.txt, then exit; for listening on the go")
@@ -1108,6 +1625,8 @@ def resolve_settings(args: argparse.Namespace, defaults: dict | None = None) -> 
             raise CLIError(f"config defaults.{name}: expected an integer, got {value!r}")
         if kind is float and (isinstance(value, bool) or not isinstance(value, (int, float))):
             raise CLIError(f"config defaults.{name}: expected a number, got {value!r}")
+        if kind is bool and not isinstance(value, bool):
+            raise CLIError(f"config defaults.{name}: expected true or false, got {value!r}")
         if kind is str and not isinstance(value, str):
             raise CLIError(f"config defaults.{name}: expected text, got {value!r}")
         return kind(value)
@@ -1144,6 +1663,11 @@ def resolve_settings(args: argparse.Namespace, defaults: dict | None = None) -> 
         qsb = noise = qrm = 0.0
     rx_filter_hz = pick("filter", int, args.filter)
     shape = pick("shape", str, args.shape)
+    sidetone = pick("sidetone", bool, args.sidetone)
+    meter = pick("meter", bool, args.meter)
+    history = pick("history", str, None if args.history is None else str(args.history))
+    history = None if args.no_history else (
+        Path(history).expanduser() if history else default_history_path())
 
     if not WPM_MIN <= wpm <= WPM_MAX:
         raise CLIError(f"{label('wpm')} must be between {WPM_MIN} and {WPM_MAX} (got {wpm})")
@@ -1185,7 +1709,8 @@ def resolve_settings(args: argparse.Namespace, defaults: dict | None = None) -> 
                     show_text=bool(args.show_text), seed=args.seed, no_play=args.no_play,
                     config=Path(args.config), player=player, station=station, fist=fist,
                     vary=vary, qsb=qsb, noise=noise, qrm=qrm, filter=rx_filter_hz,
-                    shape=shape, export=args.export)
+                    shape=shape, export=args.export, sidetone=sidetone, history=history,
+                    stats=args.stats, meter=meter)
 
 
 def settings_from_argv(argv, defaults: dict | None = None) -> Settings:
@@ -1198,17 +1723,46 @@ def settings_from_argv(argv, defaults: dict | None = None) -> Settings:
 # ----------------------------------------------------------------------------
 
 def _symbols(out):
-    unicode = {"play": "▶", "pause": "⏸", "stop": "■", "dot": "·", "pm": "±"}
-    ascii_ = {"play": ">", "pause": "||", "stop": "#", "dot": "-", "pm": "+/-"}
+    unicode = {"play": "▶", "pause": "⏸", "stop": "■", "dot": "·", "pm": "±",
+               "ok": "✓", "bad": "✗", "star": "★", "up": "▲", "down": "▼", "to": "→",
+               "full": "█", "empty": "░", "blocks": "▁▂▃▄▅▆▇█", "send": "◀",
+               "heat": ("··", "░░", "▒▒", "▓▓", "██"), "lit": "▮", "unlit": "▯"}
+    ascii_ = {"play": ">", "pause": "||", "stop": "#", "dot": "-", "pm": "+/-",
+              "ok": "+", "bad": "x", "star": "*", "up": "^", "down": "v", "to": "->",
+              "full": "#", "empty": ".", "blocks": "_.-~=+*#", "send": "<",
+              "heat": ("..", "--", "==", "##", "@@"), "lit": "|", "unlit": "."}
     try:
-        "".join(unicode.values()).encode(getattr(out, "encoding", None) or "ascii")
+        "".join("".join(v) for v in unicode.values()).encode(getattr(out, "encoding", None) or "ascii")
         return unicode
     except (UnicodeEncodeError, LookupError):
         return ascii_
 
 
+ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def clip(text: str, width: int) -> str:
+    """``text`` cut to ``width`` visible characters; colour codes do not
+    count and are never cut in half."""
+    out, seen, pos = [], 0, 0
+    for match in ANSI_RE.finditer(text):
+        plain = text[pos:match.start()]
+        if seen + len(plain) > width:
+            out.append(plain[:width - seen])
+            return "".join(out) + "\033[0m"
+        out.append(plain)
+        seen += len(plain)
+        out.append(match.group())
+        pos = match.end()
+    rest = text[pos:]
+    if seen + len(rest) > width:
+        return "".join(out) + rest[:width - seen] + "\033[0m"
+    return "".join(out) + rest
+
+
 class UI:
-    """Plain text output with one status line rewritten in place on a TTY."""
+    """Plain text output with one status line rewritten in place on a TTY,
+    in colour on a TTY unless NO_COLOR is set."""
 
     def __init__(self, out=None):
         self.out = out or sys.stdout
@@ -1216,8 +1770,15 @@ class UI:
             self.tty = self.out.isatty()
         except (AttributeError, ValueError):
             self.tty = False
+        self.color = self.tty and not os.environ.get("NO_COLOR")
         self.sym = _symbols(self.out)
         self._status_open = False
+
+    def paint(self, text: str, style: str) -> str:
+        code = STYLES[style]
+        if not self.color or not text or not code:
+            return text
+        return f"\033[{code}m{text}\033[0m"
 
     def line(self, text: str = "") -> None:
         if self._status_open:
@@ -1228,7 +1789,9 @@ class UI:
 
     def status(self, text: str) -> None:
         if self.tty:
-            self.out.write("\r\033[K" + text)
+            # A status line that wraps can no longer be rewritten in place.
+            width = shutil.get_terminal_size((100, 24)).columns - 1
+            self.out.write("\r\033[K" + clip(text, width))
             self._status_open = True
         else:
             self.out.write(text + "\n")
@@ -1246,8 +1809,6 @@ class Transmitter:
     conditions, and the per-station variation of --vary (each station keys at
     its own speed and on its own frequency)."""
 
-    SLOW_FACTOR = 2 / 3  # effective speed of the first half of a slow replay
-
     def __init__(self, settings: Settings, rate: int = SAMPLE_RATE):
         self.settings = settings
         self.rate = rate
@@ -1255,8 +1816,12 @@ class Transmitter:
         self.rng = random.Random(None if seed is None else f"{seed}:audio")
         self.wpm_offset = 0
         self.tone_offset = 0
+        # its own stream, so the S-meter never changes the audio of a seed
+        self._meter_rng = random.Random(None if seed is None else f"{seed}:meter")
+        self.strength = 7.0   # S units, for the S-meter
 
     def new_station(self) -> None:
+        self.strength = self._meter_rng.uniform(*STRENGTH_RANGE)
         vary = self.settings.vary
         if vary:
             self.wpm_offset = self.rng.randint(-vary, vary)
@@ -1269,10 +1834,14 @@ class Transmitter:
             return sent, sent
         return sent, max(WPM_MIN, min(sent, farnsworth + self.wpm_offset))
 
-    def render(self, phrase: str, wpm: int, farnsworth: int, slow: bool = False):
+    def sidetone(self, text: str, wpm: int):
+        """What you send: a perfect keyer at your character speed, on your
+        tone, heard dry while the receiver is muted."""
+        volume = self.settings.volume * SIDETONE_LEVEL
+        return render(text, timing_for(wpm), self.settings.tone, volume, self.rate)
+
+    def render(self, phrase: str, wpm: int, farnsworth: int):
         wpm, farnsworth = self.speeds(wpm, farnsworth)
-        if slow:
-            farnsworth = max(WPM_MIN, int(farnsworth * self.SLOW_FACTOR))
         tone = max(TONE_MIN, min(TONE_MAX, self.settings.tone + self.tone_offset))
         # The receiver is tuned so that a zero-beat station sounds at --tone;
         # with --vary a station is a little off and its pitch shifts.
@@ -1280,17 +1849,101 @@ class Transmitter:
                       self.rate, self.settings.conditions, self.rng, rx_hz=self.settings.tone)
 
 
-class Session:
-    QUIT_KEYS = ("q", "esc", "eof", "ctrl-c")
-    NEXT_KEYS = ("n", "enter")
+# ----------------------------------------------------------------------------
+# S-meter: a retro LED bar that follows what the receiver hears
+# ----------------------------------------------------------------------------
+#
+# The meter reads the audio actually played, in 50 ms frames: a station's
+# key-down reads its strength, the gaps read the noise floor through the
+# filter, QSB moves it. One S-unit is 6 dB. Like a real AGC meter it rises at
+# once and falls back slowly, so it stays up through a word and dips between
+# words. While you send, it shows TX.
 
-    def __init__(self, settings: Settings, corpus: Corpus, player: Player, out=None):
+METER_FRAME_SECONDS = 0.05
+METER_DECAY = 0.35        # S-units the bar falls per frame
+METER_LAG_SECONDS = 0.1   # the player starts a little after its clock
+METER_SEGMENTS = 12       # S1 ... S9, then +10, +20, +30 dB
+STRENGTH_RANGE = (4.5, 9 + 20 / 6)   # a station between S4-5 and S9+20
+
+
+def meter_track(samples, rate: int, volume: float, strength: float, tx_samples: int = 0):
+    """``[(is_tx, level), ...]`` per frame: an S reading for the receiver, or
+    for your own sending the key-down level 0-1."""
+    frame = max(1, int(rate * METER_FRAME_SECONDS))
+    ref = 32767 * max(0.0, min(1.0, volume)) / math.sqrt(2.0)
+    track, rx, tx = [], 0.0, 0.0
+    for start in range(0, len(samples), frame):
+        chunk = samples[start:start + frame]
+        rms = math.sqrt(sum(x * x for x in chunk) / len(chunk)) if chunk else 0.0
+        if start < tx_samples:
+            key = min(1.0, rms / (ref * SIDETONE_LEVEL)) if ref else 0.0
+            tx = key if key > tx else max(key, tx - 0.25)
+            track.append((True, tx))
+            continue
+        s = strength + 20 * math.log10(rms / ref) / 6 if rms > 0 and ref else 0.0
+        s = max(0.0, s)
+        rx = s if s > rx else max(s, rx - METER_DECAY)
+        track.append((False, rx))
+    return track
+
+
+def s_label(s: float) -> str:
+    """The reading the bar shows: whole S-units, then 10 dB steps over S9."""
+    if s < 9:
+        return f"S{max(0, int(s))}"
+    over = min(30, int((s - 9) * 6 // 10) * 10)
+    return f"S9+{over}" if over else "S9"
+
+
+def segment_threshold(i: int) -> float:
+    """S reading at which segment i (1-12) lights."""
+    return i if i <= 9 else 9 + (i - 9) * 10 / 6
+
+
+def meter_bar(entry, ui) -> str:
+    """``S7    ▮▮▮▮▮▮▮▯▯▯▯▯`` for a frame of ``meter_track``; None = idle."""
+    sym = ui.sym
+    if entry is None:
+        return f"{'':6}" + ui.paint(sym["unlit"] * METER_SEGMENTS, "off")
+    is_tx, value = entry
+    if is_tx:
+        lit = round(value * METER_SEGMENTS)
+        return (ui.paint(f"{'TX':<6}", "tx") + ui.paint(sym["lit"] * lit, "tx")
+                + ui.paint(sym["unlit"] * (METER_SEGMENTS - lit), "off"))
+    runs = []   # [style, count]: one colour code per run of segments
+    for i in range(1, METER_SEGMENTS + 1):
+        style = ("meter" if i <= 9 else "over") if value >= segment_threshold(i) else "off"
+        if runs and runs[-1][0] == style:
+            runs[-1][1] += 1
+        else:
+            runs.append([style, 1])
+    bar = "".join(ui.paint((sym["unlit"] if style == "off" else sym["lit"]) * n, style)
+                  for style, n in runs)
+    return f"{s_label(value):<6}" + bar
+
+
+class Session:
+    """One practice session: phrases, your requests, your Rogers, your Elo.
+
+    With a ``history``, every phrase you Roger with r is rated and saved;
+    without one (--no-history, --no-play), or with --show-text, the session
+    is off the record.
+    """
+
+    QUIT_KEYS = ("q", "esc", "eof", "ctrl-c")
+    NEXT_KEYS = ("r", "n", "enter")
+
+    def __init__(self, settings: Settings, corpus: Corpus, player: Player, out=None,
+                 history: History | None = None, now=None):
         self.settings = settings
         self.corpus = corpus
         self.player = player
         self.ui = UI(out)
         self.generator = Generator(corpus, settings.difficulty, settings.mode, settings.seed,
                                    settings.station)
+        # Only on a live terminal: off it, every change would print a line.
+        self.meter_on = settings.meter and self.ui.tty and player.enabled
+        self._track = []
         self.tx = Transmitter(settings, player.rate)
         self.wpm = settings.wpm
         self.farnsworth = settings.farnsworth
@@ -1298,15 +1951,38 @@ class Session:
         # value. Only [ and ] switch it, so - then + restores the offset.
         self.farnsworth_locked = settings.farnsworth == settings.wpm
         self._fw_wanted = settings.farnsworth  # last value chosen, before clamping
+        self.qrs_drop = 0   # WPM a QRS took off the Farnsworth speed, given back by QRQ
         self.phrase = ""
-        self._audio = (array.array("h"), [])  # the phrase at normal speed
+        self._audio = (array.array("h"), [])  # the phrase as the station sends it now
+        seed = settings.seed
+        self._calls = random.Random(None if seed is None else f"{seed}:sidetone")
+        self._now = now or (lambda: datetime.now().astimezone())
+        self.history = history
+        self.rated = history is not None and not settings.show_text
+        self.rating = Rating(corpus.rating)
+        for rec in history.records if history else ():
+            self.rating.play(rec)
+        self.opening = self.rating.value
+        self.games: list = []
+        self.outcomes = {"proper": 0, "agn": 0, "qrs": 0, "peek": 0}
+        self.in_a_row = self.best_run = 0   # Proper Rogers in a row, this session
+        self._save_error = None
+        self._session_start = time.monotonic()
+        self._begin("")
+
+    @property
+    def sent_fw(self) -> int:
+        """The Farnsworth speed the station sends at: yours, minus any QRS."""
+        return max(WPM_MIN, self.farnsworth - self.qrs_drop)
 
     # -- output -------------------------------------------------------------
 
     def header(self) -> str:
         dot = f" {self.ui.sym['dot']} "
         parts = [f"{self.wpm} WPM"]
-        if self.farnsworth != self.wpm:
+        if self.qrs_drop:
+            parts.append(f"Farnsworth {self.sent_fw} (QRS, yours is {self.farnsworth})")
+        elif self.farnsworth != self.wpm:
             parts.append(f"Farnsworth {self.farnsworth}")
         parts += [f"Difficulty {self.settings.difficulty}", self.settings.mode.capitalize()]
         st = self.settings
@@ -1323,46 +1999,131 @@ class Session:
             parts.append("no audio")
         return dot.join(parts)
 
+    def rating_line(self) -> str:
+        dot = f" {self.ui.sym['dot']} "
+        if not self.rated:
+            why = "--show-text" if self.settings.show_text else (
+                "--no-play" if self.settings.no_play else "--no-history")
+            return f"off the record ({why}): not rated"
+        rank, following, at = rank_for(self.rating.model, self.rating.value)
+        parts = [self.ui.paint(f"Elo {self.rating.label()}", "bold"), rank]
+        if following:
+            parts.append(f"{math.ceil(at - self.rating.value)} to {following}")
+        count = self.rating.count
+        parts.append(f"{count} phrase{'s' if count != 1 else ''} on record" if count
+                     else "your first rated session")
+        return dot.join(parts)
+
     def status_text(self, revealed: bool) -> str:
         state = self.player.state()
         sym = self.ui.sym
         icon = {"playing": f"{sym['play']} playing...", "paused": f"{sym['pause']} paused",
                 "done": f"{sym['stop']} done"}[state]
-        keys = [{"playing": "[space] pause", "paused": "[space] resume",
-                 "done": "[space] replay"}[state]]
-        if state != "done":  # when done, space already replays
-            keys.append("[r] replay")
-        keys += ["[t] hide" if revealed else "[t] reveal", "[n] next", "[q] quit"]
-        return f"{icon:<14} " + "  ".join(keys)
-
-    # -- playback -----------------------------------------------------------
+        keys = ["[r] roger"]
+        keys.append({"playing": "[space] pause", "paused": "[space] resume",
+                     "done": "[space] agn"}[state])
+        if state != "done":  # when done, space already asks AGN
+            keys.append("[a] agn")
+        keys += ["[s] qrs", "[t] hide" if revealed else "[t] peek", "[q] quit"]
+        elo = f"Elo {self.rating.label()}   " if self.rated else ""
+        text = f"{icon:<14} {elo}" + "  ".join(keys)
+        if self.meter_on:
+            text = self.meter_text() + "  " + text
+        return text
 
     def reveal_text(self) -> str:
         if not self.settings.vary:
             return self.phrase
-        wpm, farnsworth = self.tx.speeds(self.wpm, self.farnsworth)
+        wpm, farnsworth = self.tx.speeds(self.wpm, self.sent_fw)
         speed = f"{wpm} WPM" if wpm == farnsworth else f"{wpm}/{farnsworth} WPM"
         return f"{self.phrase}   ({speed})"
 
-    def start(self, phrase: str) -> None:
+    # -- playback -----------------------------------------------------------
+
+    def _begin(self, phrase: str) -> None:
+        """A new phrase: nothing asked, nothing heard yet."""
         self.phrase = phrase
-        self._audio = self.tx.render(phrase, self.wpm, self.farnsworth)
+        self.agn = self.qrs = 0
+        self.peek = False
+        self._heard = None      # the easiest way this phrase was heard: a record
+        self._started = time.monotonic()
+
+    def start(self, phrase: str) -> None:
+        if phrase != self.phrase:
+            self._begin(phrase)
+        self._audio = self.tx.render(phrase, self.wpm, self.sent_fw)
+        self._note_heard()
         self.replay()
 
-    def replay(self) -> None:
-        """Play the phrase from the top at normal speed."""
-        self.player.load(*self._audio)
-        self.player.play(0)
+    def _note_heard(self) -> None:
+        """Keep the easiest speeds this phrase was heard at: turning the
+        speed down to copy it is free, but it is rated at the slowest."""
+        wpm, fw = self.tx.speeds(self.wpm, self.sent_fw)
+        st = self.settings
+        rec = {"wpm": wpm, "fw": fw, "set_wpm": self.wpm, "set_fw": self.farnsworth,
+               "level": st.difficulty, "mode": st.mode,
+               "words": len(self.phrase.split()), "fist": st.fist, "vary": st.vary,
+               "qsb": st.qsb, "noise": st.noise, "qrm": st.qrm, "filter": st.filter,
+               "shape": st.shape}
+        model = self.rating.model
+        if self._heard is None or phrase_rating(model, rec) < phrase_rating(model, self._heard):
+            self._heard = rec
 
-    def slow_replay(self) -> None:
-        """The phrase with stretched spacing, a pause, then at normal speed:
-        hear the words slowly, then recognise them at full speed."""
-        slow, slow_starts = self.tx.render(self.phrase, self.wpm, self.farnsworth, slow=True)
-        normal, normal_starts = self._audio
-        gap = _silence(self.player.rate)
-        offset = len(slow) + len(gap)
-        self.player.load(slow + gap + normal, slow_starts + [offset + i for i in normal_starts])
+    def replay(self) -> None:
+        """Play the phrase from the top as the station sends it now."""
+        self._play(*self._audio)
+
+    def _play(self, samples, starts=(), tx_samples: int = 0) -> None:
+        """Load and play one buffer, the first ``tx_samples`` being you."""
+        self.player.load(samples, starts)
         self.player.play(0)
+        self._track = (meter_track(samples, self.player.rate, self.settings.volume,
+                                   self.tx.strength, tx_samples) if self.meter_on else [])
+
+    def meter_text(self) -> str:
+        state = self.player.state()
+        entry = None
+        if state != "done" and self._track:
+            lag = 0 if state == "paused" else int(METER_LAG_SECONDS * self.player.rate)
+            pos = max(0, self.player.position() - lag)
+            frame = pos // max(1, int(self.player.rate * METER_FRAME_SECONDS))
+            entry = self._track[min(frame, len(self._track) - 1)]
+        return meter_bar(entry, self.ui)
+
+    def _call(self, kind: str) -> str:
+        return self._calls.choice(self.corpus.sidetone[kind])
+
+    def _send_then(self, call: str, samples, starts) -> None:
+        """Your ``call`` on the sidetone, a pause, then ``samples``: the
+        other station comes back."""
+        self.ui.line(self.ui.paint(f"{self.ui.sym['send']} {call}", "dim"))
+        if not self.settings.sidetone:
+            self._play(samples, starts)
+            return
+        side, side_starts = self.tx.sidetone(call, self.wpm)
+        gap = _silence(int(self.player.rate * SIDETONE_GAP_SECONDS))
+        offset = len(side) + len(gap)
+        self._play(side + gap + samples, side_starts + [offset + i for i in starts],
+                   tx_samples=len(side))
+
+    def ask_agn(self) -> None:
+        """AGN?: the phrase again, from the top."""
+        self.agn += 1
+        self._send_then(self._call("agn"), *self._audio)
+
+    def ask_qrs(self) -> None:
+        """QRS: the station sends again with more space between characters
+        (Farnsworth), the characters themselves still at your --wpm, and
+        stays that slow. Each Proper Roger after that brings it back up."""
+        self.qrs += 1
+        drop = min(self.qrs_drop + QRS_STEP_WPM, self.farnsworth - WPM_MIN)
+        if drop > self.qrs_drop:
+            self.qrs_drop = drop
+            self._audio = self.tx.render(self.phrase, self.wpm, self.sent_fw)
+            self._note_heard()
+        self._send_then(self._call("qrs"), *self._audio)
+        self.ui.line(self.ui.paint(f"  QRS: Farnsworth {self.sent_fw}, back to "
+                                   f"{self.farnsworth} as you copy", "dim"))
 
     def change_wpm(self, delta: int) -> None:
         new = max(WPM_MIN, min(WPM_MAX, self.wpm + delta))
@@ -1374,20 +2135,145 @@ class Session:
         self.start(self.phrase)
 
     def change_farnsworth(self, delta: int) -> None:
-        new = max(WPM_MIN, min(self.wpm, self.farnsworth + delta))
-        if new == self.farnsworth:
+        """[ and ]: from what you hear now; it ends a QRS."""
+        new = max(WPM_MIN, min(self.wpm, self.sent_fw + delta))
+        if new == self.sent_fw:
             return
+        self.qrs_drop = 0
         self.farnsworth = self._fw_wanted = new
         self.farnsworth_locked = new == self.wpm
         self.ui.line(self.header())
         self.start(self.phrase)
 
+    # -- Roger ----------------------------------------------------------------
+
+    def roger(self, revealed: bool) -> Game | None:
+        """You copied it (or gave up): score it, save it, say so."""
+        ui = self.ui
+        proper = not (self.agn or self.qrs or self.peek)
+        if proper:
+            self.outcomes["proper"] += 1
+        self.in_a_row = self.in_a_row + 1 if proper else 0
+        self.best_run = max(self.best_run, self.in_a_row)
+        qrq = None
+        if proper and self.qrs_drop:
+            self.qrs_drop = max(0, self.qrs_drop - QRQ_STEP_WPM)
+            qrq = (f"back to your Farnsworth {self.farnsworth}" if not self.qrs_drop
+                   else f"Farnsworth {self.sent_fw}, {self.qrs_drop} to go")
+        self.outcomes["agn"] += self.agn
+        self.outcomes["qrs"] += self.qrs
+        self.outcomes["peek"] += self.peek
+        if not revealed:
+            ui.line(ui.paint(self.reveal_text(), "dim"))  # check your copy
+        game = None
+        if self.rated:
+            rec = {"t": self._now().isoformat(timespec="seconds"), **self._heard,
+                   "agn": self.agn, "qrs": self.qrs, "peek": self.peek,
+                   "secs": round(time.monotonic() - self._started, 1), "text": self.phrase}
+            game = self.rating.play(rec)
+            self.games.append(game)
+            try:
+                self.history.append(rec)
+            except OSError as exc:
+                if self._save_error is None:
+                    self._save_error = f"cannot save to {self.history.path}: {exc.strerror or exc}"
+                    ui.line(f"warning: {self._save_error}")
+        if not self.settings.show_text:  # reading along is not copying
+            ui.line(self.verdict(proper, game))
+        for note in self.notes(game):
+            ui.line(note)
+        if qrq:
+            ui.line(ui.paint(f"  {ui.sym['up']} QRQ: {qrq}", "good"))
+        return game
+
+    def verdict(self, proper: bool, game: Game | None) -> str:
+        ui, sym = self.ui, self.ui.sym
+        if self.peek:
+            label = ui.paint(f"{sym['bad']} PEEKED", "bad")
+        elif proper:
+            label = ui.paint(f"{sym['ok']} PROPER ROGER", "good")
+        else:
+            asks = [f"{n} {what}" if n > 1 else what
+                    for what, n in (("AGN", self.agn), ("QRS", self.qrs)) if n]
+            label = ui.paint(f"{sym['ok']} ROGER", "ok") + f" after {' + '.join(asks)}"
+        if game is None:
+            return label
+        delta = f"{game.delta:+d}"
+        delta = ui.paint(delta, "up" if game.delta > 0 else "down" if game.delta < 0 else "dim")
+        return (f"{label}   {delta}  {sym['to']} Elo {self.rating.label()}"
+                f"   {ui.paint(f'phrase {round(game.d)}', 'dim')}")
+
+    def notes(self, game: Game | None) -> list:
+        """The crunchy bits: runs, personal bests, ranks."""
+        if game is None:
+            return []
+        ui, sym = self.ui, self.ui.sym
+        out = []
+        if game.proper and self.in_a_row in RUN_MILESTONES:
+            out.append(ui.paint(f"  {sym['star']} {self.in_a_row} Proper Rogers in a row", "good"))
+        if game.rank_after != game.rank_before:
+            ranks = [name for _, name in self.rating.model.ranks]
+            if ranks.index(game.rank_after) > ranks.index(game.rank_before):
+                out.append(ui.paint(f"  {sym['up']} RANK UP: {game.rank_after.upper()}", "good"))
+            else:
+                out.append(ui.paint(f"  {sym['down']} back to {game.rank_after}", "dim"))
+        if game.new_best:
+            out.append(ui.paint(f"  {sym['star']} new best: {round(game.after)}", "good"))
+        return out
+
+    def _wait_sidetone(self, keyboard: Keyboard) -> bool:
+        """Let your Roger go out; any key cuts it short. False on quit."""
+        if not self.player.enabled:
+            return True
+        while self.player.state() == "playing":
+            if not keyboard.raw:  # line mode: the next line is the next command
+                time.sleep(0.05)
+                continue
+            key = keyboard.read_key(0.05)
+            if key in self.QUIT_KEYS:
+                return False
+            if key is not None:
+                break
+        return True
+
+    def summary(self) -> list:
+        """Two lines for the end of a rated session, else nothing."""
+        sym, dot = self.ui.sym, f" {self.ui.sym['dot']} "
+        if not self.games:
+            return []
+        count = len(self.games)
+        proper = self.outcomes["proper"]
+        seconds = time.monotonic() - self._session_start
+        parts = [f"{count} phrase{'s' if count != 1 else ''}",
+                 f"{proper} Proper Roger{'s' if proper != 1 else ''} ({proper / count:.0%})"]
+        for key, name in (("agn", "AGN"), ("qrs", "QRS"), ("peek", "peek")):
+            n = self.outcomes[key]
+            if n:
+                parts.append(f"{n} {name}{'s' if name == 'peek' and n > 1 else ''}")
+        if self.best_run > 1:
+            parts.append(f"best run {self.best_run}")
+        parts.append(f"{max(1, round(seconds / 60))} min")
+        change = round(self.rating.value) - round(self.opening)
+        style = "up" if change > 0 else "down" if change < 0 else "dim"
+        elo = (f"Elo {round(self.opening)} {sym['to']} {self.rating.label()} "
+               + self.ui.paint(f"({change:+d})", style)
+               + f"{dot}{rank_for(self.rating.model, self.rating.value)[0]}")
+        if self.rating.best is not None:
+            elo += f"{dot}best {round(self.rating.best)}"
+        return [dot.join(parts), elo]
+
     # -- main loop ----------------------------------------------------------
 
     def run(self) -> int:
         ui = self.ui
+        self._session_start = time.monotonic()
         ui.line("CW Ragchew RX")
         ui.line(self.header())
+        ui.line(self.rating_line())
+        if self.history is not None and self.history.records:
+            ui.line()
+            for line in heatmap(self.history.records, ui, self._now().date()):
+                ui.line(line)
         ui.line()
         ui.line(KEYS_HELP.split("\n", 1)[1])
         n = 0
@@ -1402,7 +2288,10 @@ class Session:
         finally:
             self.player.close()
             ui.line()
-            ui.line("73")
+            lines = self.summary()
+            ui.line(("73" + f" {ui.sym['dot']} " + lines[0]) if lines else "73")
+            for line in lines[1:]:
+                ui.line(line)
             ui.close()
         return 0
 
@@ -1418,6 +2307,7 @@ class Session:
         ui = self.ui
         ui.line()
         ui.line(title)
+        self._begin(phrase)
         self.start(phrase)
         if revealed:
             ui.line(self.reveal_text())
@@ -1431,21 +2321,31 @@ class Session:
             if text != shown:
                 ui.status(text)
                 shown = text
-            key = keyboard.read_key(0.1)
+            key = keyboard.read_key(0.05 if self.meter_on else 0.1)
             if key is None:
                 continue
             if key in self.QUIT_KEYS:
                 return False
             if key in self.NEXT_KEYS:
-                return True
-            if key == "r":
-                self.replay()
+                self.roger(revealed)
+                if self.settings.sidetone and self.player.enabled:
+                    kind = "roger" if not (self.agn or self.qrs or self.peek) else "ack"
+                    side, starts = self.tx.sidetone(self._call(kind), self.wpm)
+                    self._play(side, starts, tx_samples=len(side))
+                return self._wait_sidetone(keyboard)
+            if key == "a":
+                self.ask_agn()
             elif key == "s":
-                self.slow_replay()
+                self.ask_qrs()
             elif key == "space":
-                self.player.toggle_pause()
+                if self.player.state() == "done":
+                    self.ask_agn()
+                else:
+                    self.player.toggle_pause()
             elif key == "t":
                 revealed = not revealed
+                if revealed:
+                    self.peek = True
                 ui.line(self.reveal_text() if revealed else "(text hidden)")
             elif key in ("+", "="):
                 self.change_wpm(+1)
@@ -1489,6 +2389,16 @@ def export(settings: Settings, corpus: Corpus, out=None) -> int:
     return 0
 
 
+def show_stats(settings: Settings, corpus: Corpus, out=None, today=None) -> int:
+    """--stats: your Elo, streak and progress, from the history."""
+    out = out or sys.stdout
+    history = History(settings.history or default_history_path()).load()
+    ui = UI(out)
+    for line in stats_report(history, corpus.rating, ui, today):
+        ui.line(line)
+    return 0
+
+
 def main(argv=None) -> int:
     if sys.platform == "win32":
         os.system("")  # enable ANSI escape processing in the Windows console
@@ -1497,8 +2407,13 @@ def main(argv=None) -> int:
     try:
         corpus = load_corpus(args.config)
         settings = resolve_settings(args, corpus.defaults)
+        if settings.stats:
+            return show_stats(settings, corpus)
         if settings.export:
             return export(settings, corpus)
+        history = None
+        if settings.history is not None and not settings.no_play:
+            history = History(settings.history).load()
         backend = None
         if not settings.no_play:
             backend = find_player(settings.player)
@@ -1509,11 +2424,14 @@ def main(argv=None) -> int:
     except (CorpusError, CLIError, RuntimeError) as exc:
         print(f"{parser.prog}: error: {exc}", file=sys.stderr)
         return 2
-    except OSError as exc:  # --export to a path that cannot be written
+    except OSError as exc:  # --export to a path that cannot be written, unreadable history
         print(f"{parser.prog}: error: {exc.filename}: {exc.strerror or exc}", file=sys.stderr)
         return 2
+    if history is not None and history.skipped:
+        print(f"warning: {history.skipped} unreadable lines in {history.path} skipped",
+              file=sys.stderr)
     player = Player(SAMPLE_RATE, backend, enabled=not settings.no_play)
-    return Session(settings, corpus, player).run()
+    return Session(settings, corpus, player, history=history).run()
 
 
 if __name__ == "__main__":

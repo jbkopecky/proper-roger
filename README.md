@@ -4,25 +4,38 @@
 
 proper-roger is a tiny command-line trainer that keys endless, realistic
 fragments of conversational Morse: the kind of thing you hear when two
-operators settle in for a chat on 40 m. You listen, replay, pause, reveal
-the text, and move on. That is the whole loop, and it works.
+operators settle in for a chat on 40 m. You listen. If you copied it, you
+send **R R** and the next one comes. If you didn't, you send **AGN?** or
+**QRS PSE** on your own sidetone and the other station sends it again. Every
+phrase you Roger counts toward your **CW RX Elo**, and a little calendar
+shows you whether you're building the habit.
 
 ```text
-$ python3 pr.py -w 20 -f 15 -d 3 --fist 10 --noise 0.3 --filter 250
+$ python3 pr.py -d 3
 
 CW Ragchew RX
-20 WPM · Farnsworth 15 · Difficulty 3 · Mixed · fist 10% · noise 0.3 · filter 250 Hz soft
+25 WPM · Farnsworth 18 · Difficulty 3 · Mixed · fist 5% · vary ±1 · QSB 0.2 · noise 0.15 · filter 400 Hz soft
+Elo 1412 · Ragchewer · 88 to Head copier · 612 phrases on record
+
+          Mo Tu We Th Fr Sa Su
+  Sep  7  ▒▒ ▓▓ ·· ▒▒ ██ ░░ ··
+  Sep 14  ▓▓ ▒▒ ▒▒ ·· ▓▓ ██ ▒▒
+  Sep 21  ▒▒ ▓▓ ▓▓ ▒▒ ▓▓ ▒▒ ··
+          less ·· ░░ ▒▒ ▓▓ ██ more   streak 6 days · today: not yet, keep your 6-day streak alive
 
 Exercise 1
-▶ playing...   [space] pause  [r] replay  [t] reveal  [n] next  [q] quit
-```
-
-Press `t` when you want the answer:
-
-```text
+S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶ playing...   Elo 1412   [r] roger  [space] pause  [a] agn  [s] qrs  [t] peek
 NAME HR IS STEVE AND QTH IS GRENOBLE
-▶ playing...   [space] pause  [r] replay  [t] hide  [n] next  [q] quit
+✓ PROPER ROGER   +17  → Elo 1429   phrase 1579
+  ★ 5 Proper Rogers in a row
+
+Exercise 2
+◀ AGN?
+SO I USE A VERTICAL FER NW HI
+✓ ROGER after AGN   +5  → Elo 1434   phrase 1572
 ```
+
+When you press `r`, the phrase is printed, so you can check your copy.
 
 ## Why it is different
 
@@ -48,6 +61,13 @@ that. proper-roger does.
   fade, just like on your rig.
 - **Take it on a walk.** Export a session to a WAV file with its transcript
   and listen on your phone.
+- **You talk back.** `r` sends `R R`, `a` sends `AGN?`, `s` sends
+  `QRS PSE`, all on your own dry sidetone. Then the other station comes back.
+- **A CW RX Elo.** Each phrase has its own rating, from its speed, spacing,
+  language level, length and band conditions. It is scored as a game you
+  win, draw or lose. You get ranks from SWL to Legend, runs of Proper
+  Rogers, streaks, personal bests, and `--stats` to tell you what to try
+  next.
 - **Nothing to install.** One Python file, standard library only. No pip, no
   account, no network, no browser.
 
@@ -58,7 +78,8 @@ git clone <this repo> && cd proper-roger
 python3 pr.py
 ```
 
-That's it: 18 WPM, difficulty 2, endless session, `q` to quit. You need
+That's it: characters at 25 WPM spaced out to 18 WPM (Farnsworth),
+difficulty 2, endless session, `q` to quit. You need
 Python 3.11 or newer. With [uv](https://docs.astral.sh/uv/),
 `uv run pr.py` works too and gets a suitable Python if yours is older.
 
@@ -73,30 +94,211 @@ on Windows. You can also pass any other command with `--player "cmd"`.
 | to get started gently, on a calm band      | `python3 pr.py -d 1 -m blocks -w 20 -f 12`                 |
 | a perfect keyer on a silent band          | `python3 pr.py --clean`                                    |
 | real sentences, comfortable spacing       | `python3 pr.py -d 3 -w 20 -f 15`                           |
-| fast but predictable chunks               | `python3 pr.py -d 1 -m blocks -w 28`                       |
+| fast but predictable chunks               | `python3 pr.py -d 1 -m blocks -w 28 -f 28`                 |
 | the feel of a real QSO                    | `python3 pr.py -d 3 --fist 10 --vary 2 --qsb 0.4`          |
 | a busy evening on 40 m                    | `python3 pr.py -d 4 --noise 0.4 --qrm 0.3 --filter 400`    |
 | to fight the QRM with a narrow filter     | `python3 pr.py -d 4 --noise 0.4 --qrm 0.4 --filter 200 --shape sharp` |
 | 40 phrases for the commute                | `python3 pr.py --export commute.wav --count 40 -d 3`       |
 | read along while a level is still new     | `python3 pr.py -d 5 --show-text`                           |
 | the same sequence again tomorrow          | `python3 pr.py --seed 42 --count 20`                       |
+| to see how far you've come                | `python3 pr.py --stats`                                    |
+| practice off the record, nothing rated    | `python3 pr.py --no-history`                               |
 
 ## Keys during a session
 
-| key        | action                                                     |
-|------------|------------------------------------------------------------|
-| `space`    | pause / resume on the current word (replays once done)     |
-| `r`        | replay the phrase from the beginning                       |
-| `s`        | **slow replay**: stretched spacing first, then full speed  |
-| `t`        | reveal / hide the text                                     |
-| `n`, Enter | next phrase                                                |
-| `+` / `-`  | character speed +1 / -1 WPM (re-plays the phrase)          |
-| `]` / `[`  | Farnsworth effective speed +1 / -1 WPM                     |
-| `h`, `?`   | show this key list                                         |
-| `q`, Esc   | quit                                                       |
+| key              | you send  | what happens                                                 |
+|------------------|-----------|--------------------------------------------------------------|
+| `r` (`n`, Enter) | `R R`     | **Roger**: you copied it. It is scored, printed, and the next phrase comes |
+| `a`              | `AGN?`    | the phrase again, from the top                               |
+| `s`              | `QRS PSE` | the phrase again with more space, and the station **stays** slower until you Roger |
+| `space`          |           | pause / resume on the current word; once the phrase is over, `AGN?` |
+| `t`              |           | peek: reveal / hide the text (the phrase then scores nothing) |
+| `+` / `-`        |           | character speed +1 / -1 WPM (re-plays the phrase, free)      |
+| `]` / `[`        |           | Farnsworth effective speed +1 / -1 WPM (free)                |
+| `h`, `?`         |           | show this key list                                           |
+| `q`, Esc         |           | quit (the phrase you were on is not scored)                  |
 
 Keys act at once, with no Enter needed, on macOS, Linux and Windows
-terminals.
+terminals. Any key cuts your `R R` short if you're in a hurry.
+
+## Talk back: AGN?, QRS, R R
+
+On the air you don't press replay. You ask. So here, `a` keys `AGN?` (or
+`PSE AGN`) on your own sidetone. There's a short pause, then the other
+station sends the phrase again. `s` keys `QRS PSE`, and it comes back
+slower (see [QRS and QRQ](#qrs-and-qrq)). When you've got it, `r` keys `R R`,
+`R FB` or `FB` (a plain `R` or `OK` if you needed help), and the next phrase
+starts.
+
+Your sidetone sounds like a sidetone should: a perfect keyer at your
+character speed and on your `--tone`, heard dry. The band goes quiet while
+you send, as it does on a rig with semi break-in. Then you hear the other
+station again, with its fist, QSB and noise.
+
+The calls live in `config.toml` under `[sidetone]`, if you'd rather send
+`RPT PSE` or `QRS QRS`. Use `--no-sidetone`, or `sidetone = false`, for
+silent requests. By the way, `QRS?` with a question mark means "shall *I*
+send slower?". To ask the other station to slow down, you send `QRS` or
+`PSE QRS`.
+
+## Your CW RX Elo
+
+Chess ratings work because every game is played against an opponent with a
+rating. Here, every phrase is the opponent.
+
+**1. The phrase is rated.** D is how hard it was to copy, as it was sent:
+
+```text
+D = 1000
+  + 500 · log2(v / 15)             speed: v = wpm^0.3 × farnsworth^0.7
+  + 120 · (difficulty − 1)         language level 1-5
+  +  40 · log2(words / 3)          longer phrases are harder to hold in your head
+  +   4 · fist%  + 100 · qsb       band conditions
+  + 200 · noise · √(filter / 400)  a wider filter lets in more noise
+  + 150 · qrm    +  10 · vary
+```
+
+1000 is 15 WPM, level 1, three words, a perfect keyer on a silent band. The
+speed blend leans on the Farnsworth speed, because in a ragchew the time you
+have between the words matters more than how fast each character is keyed.
+The scale is logarithmic because going from 15 to 20 WPM is a bigger step
+than going from 30 to 35. Level 5 at 30 WPM on a noisy band is above 2100.
+
+**2. You play it.** Your result S:
+
+| you copied it...                          | S                         |
+|-------------------------------------------|---------------------------|
+| **Proper Roger**: `r`, no help            | 1 (a win)                 |
+| after one `AGN?`                          | 0.5 (a draw)              |
+| after `QRS PSE`                           | 0.5, rated at the slower speed |
+| each further `AGN?` or `QRS`              | −0.15                     |
+| after a peek with `t`                     | 0 (a loss)                |
+
+**3. Plain Elo.** How you were expected to do, then your new rating:
+
+```text
+E = 1 / (1 + 10^((D − R) / 400))
+R ← R + K · (S − E)          K = 48 for your first 50 phrases (Elo 1043?), then 24
+```
+
+Worked example: you are rated 1400 and play `-w 20 -f 15 -d 3` on the
+default calm band. A 6-word phrase is rated 1000 + 62 (speed) + 240 (level)
++ 40 (length) + 80 (band) = **1422**, so you are expected to score 0.47.
+From there:
+
+| you copy it ...    | Elo  |
+|--------------------|------|
+| as a Proper Roger  | +13  |
+| after one AGN      | +1   |
+| after a QRS (heard at 20/12, D = 1310) | −3   |
+| after a peek       | −11  |
+
+What that means in practice:
+
+- **It's fair across settings.** A Proper Roger at level 5 and 28 WPM earns
+  far more than one at level 1 and 18 WPM, so pushing yourself never costs
+  you rating for no reason. Play what you like, the rating follows.
+- **A phrase rated like you is a coin toss.** When D = R you're expected to
+  score 0.5, a draw on average. Phrases 100 below you are comfortable
+  (E = 0.64); phrases at or just above you are where you learn.
+- **Tuning is free.** Turning the speed down with `-` or `[` to copy a
+  phrase is not an AGN. The phrase is simply rated at the easiest speed you
+  heard it at.
+- **Honesty is on you.** A Roger is self-reported, so press `r` when you
+  copied the phrase, not when you'd like to have. The text printed after
+  your Roger lets you check.
+- `--show-text` (read-along) and `--no-history` sessions are off the
+  record. So are `--no-play` and `--export`.
+
+### Ranks
+
+| Elo   | rank           |
+|-------|----------------|
+| 0     | SWL            |
+| 900   | Novice         |
+| 1100  | Pencil copier  |
+| 1300  | Ragchewer      |
+| 1500  | Head copier    |
+| 1700  | Brass pounder  |
+| 1900  | Old timer      |
+| 2100  | Legend         |
+
+Out of the box (25/18 WPM, level 2, calm band), phrases are rated around 1400.
+Everyone starts at 1000 and climbs fast while the rating is provisional.
+Along the way you'll see `★ 5 Proper Rogers in a row` (then 10, 25, 50,
+100), `▲ RANK UP` and `★ new best`. Each session ends with a summary:
+
+```text
+73 · 24 phrases · 17 Proper Rogers (71%) · 4 AGN · 2 QRS · 1 peek · best run 9 · 18 min
+Elo 1388 → 1431 (+43) · Ragchewer · best 1440
+```
+
+### `--stats`
+
+```text
+$ python3 pr.py --stats
+proper-roger · CW RX rating
+
+  Elo 1519   Head copier   best 1632
+  Head copier ██░░░░░░░░░░░░░░░░░░░░░░ Brass pounder  182 to go
+
+  657 phrases · 2 h 19 min on air · 56% Proper Rogers (48% in the last 50)
+  streak 14 days · best 14 · longest run 12 Proper Rogers in a row
+
+          Mo Tu We Th Fr Sa Su
+  Sep  7  ▒▒ ▒▒ ▒▒ ░░ ░░ ·· ··
+  Sep 14  ░░ ░░ ▒▒ ▒▒ ▒▒ ▒▒ ░░
+  Sep 21  ▒▒ ░░ ▒▒ ▒▒ ▒▒ ▒▒ ▒▒
+          less ·· ░░ ▒▒ ▓▓ ██ more   streak 14 days · today 7 min
+
+  Elo, last 29 days   1197 ▁▄▄▄▄▄▄▅▅▅▅▅▆▆▆▇▇▆▆▇▆▇▆▆▇▇██▆ 1627
+
+  last 30 days   level  speed   phrases  Proper Roger  phrase Elo
+                 d3     20/15       370        53%       1413
+                 d2     20/13       223        62%       1221
+
+  next: 48% Proper Rogers over your last 50 at d3 20/15: the sweet spot, stay here, this is where you learn fastest
+```
+
+The `next:` line looks at your last 50 phrases at your current setup. Above
+80 % Proper Rogers, it tells you to step up, with the level first, then the
+Farnsworth spacing, then the speed. Below 40 %, it offers an easier setting.
+In between, you're in the sweet spot.
+
+### Build the habit
+
+Ten minutes a day beats an hour on Sunday. Every session, and `--stats`,
+starts with the last three weeks, one square per day, Monday first:
+
+| square | minutes on air that day |
+|--------|-------------------------|
+| `··`   | none                    |
+| `░░`   | under 5                 |
+| `▒▒`   | 5 to 10                 |
+| `▓▓`   | 10 to 20                |
+| `██`   | 20 or more              |
+
+On a colour terminal the squares are solid blocks in shades of green.
+Minutes on air count from the start of each phrase to your Roger. Next to
+the calendar is your streak of days in a row. If you haven't played today
+yet, it reminds you to keep the streak alive; the day isn't lost until
+midnight.
+
+### Your history
+
+Every phrase you Roger is saved as one line of JSON: when, how it was sent,
+how you copied it, and the text. It goes to:
+
+- macOS: `~/Library/Application Support/proper-roger/history.jsonl`
+- Linux: `$XDG_STATE_HOME/proper-roger/history.jsonl`, or `~/.local/state/...`
+- Windows: `%LOCALAPPDATA%\proper-roger\history.jsonl`
+
+Use `--history FILE`, or `history = "..."` in `config.toml`, to keep it
+elsewhere, for example in a synced folder. The history never stores a
+rating. Your Elo is replayed from the first phrase each time the trainer
+starts, so if you change a weight in `config.toml`'s `[rating]` section,
+every phrase you ever copied is re-rated with it. Think noise should count
+more for you? Raise `noise`. Want a fresh start? Rename the file.
 
 ## Difficulty is about language, not speed
 
@@ -112,16 +314,73 @@ terminals.
 `-m phrases` plays longer fragments, and `mixed` (the default) draws from
 both.
 
-## Farnsworth and the slow replay
+## Farnsworth: 25 WPM characters, 18 WPM overall
 
-`--wpm` is the character speed and `--farnsworth` the effective speed. With
-`-w 20 -f 15`, every dit and dah is sent at 20 WPM, and only the gaps between
-characters and words are stretched to give 15 WPM overall (ARRL method). You
-learn the *sound* of each character at real speed.
+`--wpm` is the character speed and `--farnsworth` the effective speed. The
+default is `-w 25 -f 18`: every dit and dah is sent at 25 WPM, and only the
+gaps between characters and words are stretched to give 18 WPM overall
+(ARRL method). You learn the *sound* of each character at real speed, the
+way you'll hear it from a good operator, and the spacing gives you time to
+follow. As you improve, close the gap with `]` or `-f`, not by slowing the
+characters down.
 
-Missed a phrase? Press `s`. You hear it with extra spacing, then at full
-speed right after, so you catch the words slowly and then recognise them at
-speed.
+A `-w` below 18 takes the Farnsworth speed down with it (`-w 15` is 15/15).
+Use `-f` on its own for other spacing, or `-f 25` for none at all.
+
+### QRS and QRQ
+
+Missed a phrase because it came too fast? Press `s` to send `QRS PSE`. The
+other station does what a real one would do. It resends the phrase with 3
+WPM more space between the characters, which are still keyed at 25 WPM.
+Then it **stays** at that speed. Each Proper Roger after that brings it
+back up by 1 WPM (QRQ), until it's back to your own Farnsworth speed:
+
+```text
+◀ QRS PSE
+  QRS: Farnsworth 15, back to 18 as you copy
+✓ ROGER after QRS   ...
+✓ PROPER ROGER   ...
+  ▲ QRQ: Farnsworth 16, 2 to go
+✓ ROGER after AGN   ...            (an AGN or a peek holds the speed)
+✓ PROPER ROGER   ...
+  ▲ QRQ: Farnsworth 17, 1 to go
+✓ PROPER ROGER   ...
+  ▲ QRQ: back to your Farnsworth 18
+```
+
+Press `s` again to slow down further. The header shows
+`Farnsworth 15 (QRS, yours is 18)` while a QRS is on. `[` or `]` takes over
+from there and ends the QRS. A QRS'd phrase is a repeat, scored like an AGN
+(0.5), and rated at the slower speed you heard it at, as are the phrases
+after it until you're back up to speed.
+
+## The S-meter
+
+On a terminal, the status line starts with a retro LED S-meter, like the
+bar graphs on small QRP rigs:
+
+```text
+S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶ playing...
+S3    ▮▮▮▯▯▯▯▯▯▯▯▯  ▶ playing...     between words: the noise floor
+S9+10 ▮▮▮▮▮▮▮▮▮▮▯▯  ▶ playing...     a loud station, over S9 in red
+TX    ▮▮▮▮▮▮▮▮▮▮▮▮  ▶ playing...     you, sending AGN?
+```
+
+It reads the audio you actually hear, like a real meter. Each station
+comes on at its own strength, from about S4 to S9+20. The meter rises at
+once and falls back slowly, as with AGC, so it stays up through a word and
+dips in the gaps. The dips show the noise floor through your filter: about
+S3 on the default calm band, higher with `--noise 0.5`, lower when you
+narrow `--filter`. QSB makes it breathe. While you send, it shows `TX`. It
+only appears on a live terminal. `--no-meter` or `meter = false` turns it
+off.
+
+## Colours
+
+Colours use only the 16 standard terminal colours, so they follow your
+terminal's own colour scheme: light, dark, Solarized, whatever you run.
+Green is good, red is a loss, dim is detail. Set `NO_COLOR=1` for none. They
+are off automatically when the output isn't a terminal.
 
 ## Follow a station
 
@@ -197,8 +456,8 @@ and check the transcript afterwards.
 ## All options
 
 ```text
--w, --wpm N          character speed in WPM (5-60, default 18)
--f, --farnsworth N   effective speed in WPM, <= --wpm (default: same as --wpm)
+-w, --wpm N          character speed in WPM (5-60, default 25)
+-f, --farnsworth N   effective speed in WPM, <= --wpm (default 18, or --wpm when lower)
 -d, --difficulty N   language difficulty 1-5, independent from speed (default 2)
 -m, --mode MODE      blocks | phrases | mixed (default mixed)
     --tone HZ        sidetone / receive pitch (default 600)
@@ -212,6 +471,15 @@ and check the transcript afterwards.
     --no-play        generate without audio (debugging, tests)
     --player CMD     force the WAV player command
     --config PATH    another corpus / defaults file (default: config.toml next to pr.py)
+
+your rating:
+    --stats          your Elo, rank, streak, progress and what to try next, then exit
+    --sidetone       hear yourself send AGN?, QRS PSE and R R (the default)
+    --no-sidetone    requests are silent, the phrase just plays again
+    --meter          a live S-meter on the status line (the default, on a terminal)
+    --no-meter       no S-meter
+    --history FILE   where rated phrases are kept (default: see "Your history")
+    --no-history     off the record: nothing rated, nothing saved
 
 band conditions (default: a calm band):
     --clean          perfect keyer on a silent band: every condition below off
@@ -236,7 +504,11 @@ plain TOML file you can edit:
 
 - `[defaults]`: your usual settings, so `python3 pr.py` alone starts the
   session you want. It holds every option above except `--count`, `--seed`,
-  `--export` and the show/hide choice. Leave `farnsworth` out for none.
+  `--export` and the show/hide choice, plus `sidetone = true/false`,
+  `meter = true/false` and `history = "path"`. Leave `farnsworth` out for none.
+- `[sidetone]`: what you send for `agn`, `qrs`, `roger` and `ack`.
+- `[rating]`: every weight of the Elo formula, K, the provisional period,
+  the results for AGN and QRS, and the rank ladder.
 - `[station]`: which placeholders belong to the station you follow.
 - `[vocab]`: word lists for `{name}`, `{qth}`, `{rig}`...: add your local
   towns, your club's favourite rigs.
@@ -258,11 +530,20 @@ Template rules:
 ## Tips
 
 - Listen for meaning, not letters. Missing a word is normal; keep listening.
-- Replay is one key away, but so is `n`. Move on more often than you replay.
+- `AGN?` is one key away, but so is `r`. Move on more often than you ask
+  for a repeat.
 - Start with `-d 1 -m blocks` a little above your comfort speed, then raise
   the difficulty before you raise the speed.
 - Add conditions one at a time. `--fist 10` alone is already a big step from
   a perfect keyer.
+- Don't chase the number by staying on easy settings. The Elo already
+  accounts for difficulty, and you gain the most on phrases rated at or
+  above you.
+- Check `--stats` once a week, not after every phrase. A few bad sessions
+  are noise. The rating over a month is the signal.
+- Fill the calendar before you chase the Elo. Short and daily wins.
+- Don't be shy with `s`. A QRS costs no more than an AGN, and the QRQ
+  back up to speed is some of the best training there is.
 
 ## Troubleshooting
 
@@ -277,18 +558,21 @@ Template rules:
 - **Odd symbols instead of `▶ · ■`**: your terminal encoding cannot show
   them. The trainer falls back to ASCII when it can detect that.
 - **Terminal left in a strange state** after a crash: type `reset`.
+- **`warning: N unreadable lines ... skipped`**: a line of your history was
+  cut short or edited by hand. The other lines still count.
 - **See what the generator produces without listening**:
   `yes n | python3 pr.py --no-play --show-text --count 10 --seed 1 -d 5`
 
 ## Under the hood
 
 ```bash
-python3 -m unittest -v     # 83 tests, a few seconds
+python3 -m unittest -v     # 135 tests, a few seconds
 ```
 
 [DOC.md](DOC.md) explains how it all works: the Farnsworth timing maths,
 prosigns, the I/Q receiver filter, the band conditions, stations,
-pause/resume on word boundaries, and the keyboard handling on each platform.
+pause/resume on word boundaries, the keyboard handling on each platform,
+and the rating and history.
 
 ## License
 

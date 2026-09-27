@@ -12,8 +12,8 @@
 # Defaults for the command line (every option can still be overridden).
 # --------------------------------------------------------------------------
 [defaults]
-wpm = 18
-# farnsworth = 15       # effective speed; leave out for none (same as wpm)
+wpm = 25                # character speed: every dit and dah at 25 WPM...
+farnsworth = 18         # ...spaced out to 18 WPM overall; leave out for none
 difficulty = 2          # 1-5, language complexity, independent from speed
 mode = "mixed"          # "blocks" | "phrases" | "mixed"
 tone = 600              # sidetone / receive pitch in Hz
@@ -29,6 +29,9 @@ qrm = 0.0               # a station calling CQ nearby, 0.0 - 1.0 (try 0.3)
 filter = 400            # receiver CW filter in Hz (100-1000), used with noise or qrm
 shape = "soft"          # filter shape: "soft" (round, no ringing) | "sharp" (steep, rings)
 # player = "ffplay -nodisp -autoexit -loglevel quiet"   # force a player command
+sidetone = true         # hear yourself send AGN?, QRS PSE and R R (false: silent)
+meter = true            # a live S-meter on the status line (false: none)
+# history = "~/cw/history.jsonl"   # where your rated phrases go (default: see README)
 
 # --------------------------------------------------------------------------
 # The station you are listening to. For `station` phrases in a row these
@@ -40,6 +43,66 @@ shape = "soft"          # filter shape: "soft" (round, no ringing) | "sharp" (st
 [station]
 keys = ["name", "qth", "rig", "antenna", "power", "key", "job", "hobby",
         "height", "band"]
+
+# --------------------------------------------------------------------------
+# What YOU send, on your own sidetone: a perfect keyer at your --wpm, heard
+# dry while the receiver is muted. One entry is picked at random each time.
+# --------------------------------------------------------------------------
+[sidetone]
+agn = ["AGN?", "PSE AGN"]            # r: a repeat, please
+qrs = ["QRS PSE", "PSE QRS"]         # s: slower, please ("QRS?" would mean
+                                     #    "shall I send slower?")
+roger = ["R R", "R FB", "FB"]        # n after a Proper Roger
+ack = ["R", "OK"]                    # n after an AGN, a QRS or a peek
+
+# --------------------------------------------------------------------------
+# Your CW RX Elo. Every phrase is an opponent rated D from how it was sent;
+# you are rated R; how you copied it is the result S of the game:
+#
+#   D = base + speed * log2(v / speed_ref)       v = wpm^0.3 * farnsworth^0.7
+#            + level * (difficulty - 1)
+#            + words * log2(words / words_ref)
+#            + fist * fist% + qsb * qsb + noise * noise * sqrt(filter / 400)
+#            + qrm * qrm + vary * vary
+#   S = 1 Proper Roger, agn after one AGN, qrs after a QRS, minus extra for
+#       each further request, 0 after a peek
+#   E = 1 / (1 + 10^((D - R) / scale))    R += K * (S - E)
+#
+# Your history stores what you heard, not your rating: change a weight here
+# and every phrase you ever copied is priced again at the next start.
+# --------------------------------------------------------------------------
+[rating]
+start = 1000            # your rating before the first phrase
+base = 1000             # 15 WPM, level 1, 3 words, perfect keyer, silent band
+speed_ref = 15
+speed = 500             # points per doubling of the blended speed
+farnsworth_share = 0.7  # how much the effective speed counts (0-1)
+level = 120             # per difficulty level above 1
+words_ref = 3
+words = 40              # per doubling of the phrase length in words
+fist = 4                # per % of fist
+qsb = 100
+noise = 200             # at noise 1 through a 400 Hz filter
+qrm = 150
+vary = 10               # per WPM of vary
+scale = 400
+k = 24                  # how far one phrase moves your rating...
+k_provisional = 48      # ...and during your first `provisional` phrases
+provisional = 50
+floor = 100
+agn = 0.5               # a Roger after one AGN is a draw
+qrs = 0.5               # a QRS too, and the phrase is rated at the slower speed
+extra = 0.15
+ranks = [
+  { at = 0,    name = "SWL" },
+  { at = 900,  name = "Novice" },
+  { at = 1100, name = "Pencil copier" },
+  { at = 1300, name = "Ragchewer" },
+  { at = 1500, name = "Head copier" },
+  { at = 1700, name = "Brass pounder" },
+  { at = 1900, name = "Old timer" },
+  { at = 2100, name = "Legend" },
+]
 
 # --------------------------------------------------------------------------
 # Vocabulary. {name}, {qth}, ... in a template pick one entry at random.

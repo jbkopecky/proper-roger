@@ -469,10 +469,10 @@ class TransmitterTests(unittest.TestCase):
         self.assertEqual(tx.speeds(20, 20), (20, 20))
         self.assertEqual(tx.speeds(5, 5), (5, 5))
 
-    def test_slow_render_is_longer_with_same_elements(self):
-        tx = pr.Transmitter(pr.settings_from_argv(["-w", "20", "--clean"]))
-        normal, _ = tx.render("TNX FER CALL", 20, 20)
-        slow, starts = tx.render("TNX FER CALL", 20, 20, slow=True)
+    def test_farnsworth_render_is_longer_with_same_elements(self):
+        tx = pr.Transmitter(pr.settings_from_argv(["-w", "25", "--clean"]))
+        normal, _ = tx.render("TNX FER CALL", 25, 18)
+        slow, starts = tx.render("TNX FER CALL", 25, 15)
         self.assertGreater(len(slow), len(normal))
         self.assertEqual(len(starts), 3)
         self.assertEqual(max(slow), max(normal))                # same tone, same volume
@@ -485,7 +485,7 @@ class TransmitterTests(unittest.TestCase):
 class CLITests(unittest.TestCase):
     def test_defaults(self):
         s = pr.settings_from_argv([])
-        self.assertEqual((s.wpm, s.farnsworth, s.difficulty, s.mode), (18, 18, 2, "mixed"))
+        self.assertEqual((s.wpm, s.farnsworth, s.difficulty, s.mode), (25, 18, 2, "mixed"))
         self.assertEqual((s.tone, s.volume, s.count, s.show_text), (600, 0.5, None, False))
         self.assertFalse(s.no_play)
         self.assertEqual(s.station, 8)
@@ -539,8 +539,9 @@ class CLITests(unittest.TestCase):
             pr.settings_from_argv([], {"bogus": 1})
 
     def test_farnsworth_defaults_to_wpm(self):
-        s = pr.settings_from_argv(["--wpm", "25"])
+        s = pr.settings_from_argv(["--wpm", "25"], {"farnsworth": None})
         self.assertEqual(s.farnsworth, 25)
+        self.assertEqual(pr.settings_from_argv(["--wpm", "15"]).farnsworth, 15)
 
     def test_invalid_values_rejected(self):
         for argv in (["--wpm", "0"], ["--wpm", "99"], ["--difficulty", "7"], ["--difficulty", "0"],
@@ -781,13 +782,13 @@ class SessionTests(unittest.TestCase):
         s.change_wpm(+1)
         self.assertEqual((s.wpm, s.farnsworth), (21, 21))
 
-    def test_status_line_does_not_repeat_replay(self):
+    def test_status_line_does_not_repeat_agn(self):
         s = self.make_session([])
         done = s.status_text(False)
-        self.assertIn("[space] replay", done)
-        self.assertNotIn("[r] replay", done)
+        self.assertIn("[space] agn", done)
+        self.assertNotIn("[a] agn", done)
         s.start("TEST")
-        self.assertIn("[r] replay", s.status_text(False))
+        self.assertIn("[a] agn", s.status_text(False))
 
     def test_player_error_is_shown_once(self):
         class BrokenPlayer(pr.Player):
@@ -799,7 +800,7 @@ class SessionTests(unittest.TestCase):
 
         session = self.make_session([], BrokenPlayer(pr.SAMPLE_RATE, None, enabled=False))
         original = pr.sys.stdin
-        pr.sys.stdin = io.StringIO("r\nq\n")
+        pr.sys.stdin = io.StringIO("a\nq\n")
         try:
             session.run()
         finally:
@@ -811,17 +812,28 @@ class SessionTests(unittest.TestCase):
             self.assertIn(key, pr.KEYS_HELP)
 
 
-    def test_slow_replay_then_normal_replay(self):
-        s = self.make_session(["-w", "20"])
+    def test_qrs_is_farnsworth_and_it_sticks(self):
+        s = self.make_session(["-w", "25", "-f", "18", "--no-sidetone", "--clean"])
         s.start("TNX FER CALL")
         normal, starts = s._audio
-        s.slow_replay()
+        s.ask_qrs()
+        self.assertEqual((s.wpm, s.sent_fw, s.farnsworth), (25, 15, 18))
         loaded = s.player._samples
-        self.assertGreater(len(loaded), 2 * len(normal))
-        self.assertEqual(loaded[-len(normal):], normal)       # ends at full speed
-        self.assertEqual(len(s.player._word_starts), 2 * len(starts))
-        s.replay()
-        self.assertEqual(s.player._samples, normal)
+        self.assertGreater(len(loaded), len(normal))
+        self.assertEqual(max(loaded), max(normal))            # characters still at 25 WPM
+        self.assertEqual(len(s.player._word_starts), len(starts))
+        self.assertIn("Farnsworth 15 (QRS, yours is 18)", s.header())
+        s.start("NEXT PHRASE")
+        self.assertEqual(s.tx.speeds(s.wpm, s.sent_fw), (25, 15))   # the station stays slower
+        s.change_farnsworth(+1)                                 # ] takes over from the QRS
+        self.assertEqual((s.sent_fw, s.farnsworth, s.qrs_drop), (16, 16, 0))
+
+    def test_qrs_never_goes_below_the_minimum(self):
+        s = self.make_session(["-w", "8", "-f", "6", "--no-sidetone"])
+        s.start("TEST")
+        s.ask_qrs()
+        s.ask_qrs()
+        self.assertEqual(s.sent_fw, pr.WPM_MIN)
 
     def test_new_station_is_announced(self):
         code, out = self.run_session(["--no-play", "--count", "5", "--seed", "1",
@@ -833,7 +845,7 @@ class SessionTests(unittest.TestCase):
         self.assertNotIn("new station", out)
 
     def test_header_and_reveal_show_conditions(self):
-        s = self.make_session(["-w", "20", "--vary", "3", "--qsb", "0.5", "--fist", "10",
+        s = self.make_session(["-w", "20", "-f", "20", "--vary", "3", "--qsb", "0.5", "--fist", "10",
                                "--noise", "0"])
         header = s.header()
         for part in ("fist 10%", f"vary {s.ui.sym['pm']}3", "QSB 0.5"):
@@ -891,3 +903,510 @@ class ExportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Sidetone, rating, history, stats
+# ---------------------------------------------------------------------------
+
+class SidetoneTests(unittest.TestCase):
+    def session(self, argv):
+        settings = pr.settings_from_argv(["--no-play", "--seed", "3"] + argv)
+        player = pr.Player(pr.SAMPLE_RATE, None, enabled=False)
+        return pr.Session(settings, pr.load_corpus(CONFIG), player, out=io.StringIO())
+
+    def test_agn_sends_your_call_then_the_phrase(self):
+        s = self.session(["-w", "20", "--noise", "0.5"])
+        s.start("TNX FER CALL")
+        normal, starts = s._audio
+        s.ask_agn()
+        loaded = s.player._samples
+        self.assertEqual(s.agn, 1)
+        self.assertEqual(loaded[-len(normal):], normal)          # then the phrase, as heard
+        head = loaded[:len(loaded) - len(normal)]
+        # your sidetone is dry: a perfect keyer, silence between elements
+        self.assertGreater(head.count(0), len(head) // 2)
+        self.assertLess(max(abs(x) for x in head), 32767 * 0.5 * pr.SIDETONE_LEVEL + 2)
+        sent_words = len(s.player._word_starts) - len(starts)
+        self.assertIn(sent_words, (1, 2))                        # AGN? or PSE AGN
+
+    def test_calls_come_from_the_config(self):
+        s = self.session([])
+        for kind, calls in pr.SIDETONE_DEFAULTS.items():
+            self.assertIn(s._call(kind), calls)
+
+    def test_no_sidetone_just_replays(self):
+        s = self.session(["--no-sidetone"])
+        s.start("TNX FER CALL")
+        s.ask_agn()
+        self.assertEqual(s.player._samples, s._audio[0])
+        self.assertEqual(s.agn, 1)
+
+    def test_sidetone_config_is_checked(self):
+        data = {"sidetone": {"agn": ["AGN ¿"]}}
+        with self.assertRaisesRegex(pr.CorpusError, "sidetone.agn"):
+            tiny_corpus(**data)
+        with self.assertRaisesRegex(pr.CorpusError, "unknown entry"):
+            tiny_corpus(sidetone={"hello": ["HI"]})
+        self.assertEqual(tiny_corpus(sidetone={"agn": ["rpt pse"]}).sidetone["agn"], ["RPT PSE"])
+
+    def test_sidetone_default_can_be_turned_off_in_config(self):
+        self.assertFalse(pr.settings_from_argv([], {"sidetone": False}).sidetone)
+        self.assertTrue(pr.settings_from_argv(["--sidetone"], {"sidetone": False}).sidetone)
+        with self.assertRaises(pr.CLIError):
+            pr.settings_from_argv([], {"sidetone": "yes"})
+
+
+def calm(**kw):
+    """A record for -w 20 -f 15 -d 3, 6 words, on the default calm band."""
+    rec = {"t": "2026-09-27T20:00:00+02:00", "wpm": 20, "fw": 15, "level": 3, "words": 6,
+           "fist": 5, "vary": 1, "qsb": 0.2, "noise": 0.15, "qrm": 0.0, "filter": 400,
+           "agn": 0, "qrs": 0, "peek": False}
+    rec.update(kw)
+    return rec
+
+
+class RatingTests(unittest.TestCase):
+    model = pr.RatingModel()
+
+    def test_reference_phrase_is_the_base(self):
+        rec = {"wpm": 15, "fw": 15, "level": 1, "words": 3}
+        self.assertAlmostEqual(pr.phrase_rating(self.model, rec), 1000.0)
+
+    def test_worked_example_from_the_readme(self):
+        self.assertEqual(round(pr.phrase_rating(self.model, calm())), 1422)
+
+    def test_harder_is_rated_higher(self):
+        d = lambda **kw: pr.phrase_rating(self.model, calm(**kw))
+        self.assertGreater(d(wpm=25, fw=25), d(wpm=20, fw=20))
+        self.assertGreater(d(fw=18), d(fw=15))                   # less Farnsworth spacing
+        self.assertGreater(d(fw=20) - d(fw=15), d(wpm=25) - d(wpm=20))  # spacing counts most
+        self.assertGreater(d(level=4), d(level=3))
+        self.assertGreater(d(words=10), d(words=4))
+        for key, value in (("fist", 20), ("qsb", 0.8), ("noise", 0.5), ("qrm", 0.4), ("vary", 4)):
+            self.assertGreater(d(**{key: value}), d(), key)
+        self.assertLess(d(filter=200), d(filter=500))            # a narrow filter helps
+
+    def test_results(self):
+        r = lambda **kw: pr.copy_result(self.model, **kw)
+        self.assertEqual(r(), 1.0)
+        self.assertEqual(r(agn=1), 0.5)
+        self.assertEqual(r(qrs=1), 0.5)
+        self.assertAlmostEqual(r(agn=2), 0.35)
+        self.assertAlmostEqual(r(agn=1, qrs=1), 0.35)
+        self.assertEqual(r(agn=9), 0.0)
+        self.assertEqual(r(peek=True), 0.0)
+
+    def rated(self, value, count=100):
+        rating = pr.Rating(self.model)
+        rating.value, rating.count, rating.best = value, count, value
+        return rating
+
+    def test_worked_example_deltas(self):
+        deltas = {}
+        for name, kw in (("proper", {}), ("agn", {"agn": 1}), ("qrs", {"qrs": 1, "fw": 12}),
+                         ("peek", {"peek": True})):
+            deltas[name] = self.rated(1400).play(calm(**kw)).delta
+        self.assertEqual(deltas, {"proper": 13, "agn": 1, "qrs": -3, "peek": -11})
+
+    def test_elo_is_zero_sum_around_expectation(self):
+        rating = self.rated(1423)
+        self.assertAlmostEqual(rating.expected(1423), 0.5)
+        self.assertEqual(rating.play(calm(agn=1)).delta, 0)      # a draw at equal ratings
+
+    def test_provisional_moves_faster(self):
+        new, settled = pr.Rating(self.model), self.rated(1000)
+        self.assertTrue(new.provisional)
+        self.assertEqual(new.label(), "1000?")
+        self.assertEqual(settled.label(), "1000")
+        rec = {"wpm": 15, "fw": 15, "level": 1, "words": 3}
+        self.assertEqual(new.play(rec).delta, 2 * settled.play(rec).delta)
+
+    def test_runs_ranks_and_bests(self):
+        rating = self.rated(1290)
+        easy = calm(level=1, words=2, wpm=15, fw=15)
+        games = [rating.play(easy) for _ in range(5)]
+        self.assertEqual([g.run for g in games], [1, 2, 3, 4, 5])
+        self.assertEqual(games[0].rank_before, "Pencil copier")
+        self.assertEqual(games[-1].rank_after, "Ragchewer")
+        self.assertTrue(all(g.new_best for g in games))
+        g = rating.play(calm(peek=True))
+        self.assertEqual((g.run, g.new_best), (0, False))
+        self.assertEqual(rating.best_run, 5)
+
+    def test_floor(self):
+        rating = self.rated(100)
+        self.assertEqual(rating.play(calm(level=5, peek=True)).after, 100)
+
+    def test_rank_for(self):
+        self.assertEqual(pr.rank_for(self.model, 1299), ("Pencil copier", "Ragchewer", 1300))
+        self.assertEqual(pr.rank_for(self.model, 1300)[0], "Ragchewer")
+        self.assertEqual(pr.rank_for(self.model, 2500), ("Legend", None, None))
+        self.assertEqual(pr.rank_for(self.model, -5)[0], "SWL")
+
+    def test_config_overrides_and_checks(self):
+        corpus = tiny_corpus(rating={"k": 32, "ranks": [{"at": 1200, "name": "B"},
+                                                          {"at": 0, "name": "A"}]})
+        self.assertEqual(corpus.rating.k, 32.0)
+        self.assertEqual(corpus.rating.ranks, ((0, "A"), (1200, "B")))
+        for bad in ({"kk": 1}, {"k": "fast"}, {"k": -1}, {"provisional": 2.5},
+                    {"farnsworth_share": 2}, {"ranks": [{"at": 0}]}, {"scale": 0}):
+            with self.assertRaises(pr.CorpusError, msg=bad):
+                tiny_corpus(rating=bad)
+
+
+class HistoryTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.path = Path(self.dir.name) / "sub" / "history.jsonl"
+
+    def test_round_trip_and_bad_lines(self):
+        h = pr.History(self.path)
+        h.append(calm())
+        h.append(calm(agn=1))
+        with self.path.open("a") as f:
+            f.write("not json\n{\"t\": \"yesterday\", \"wpm\": 20}\n[1]\n\n"
+                    "{\"t\": \"2026-09-27T20:00:00\", \"wpm\": 0}\n")
+        loaded = pr.History(self.path).load()
+        self.assertEqual(loaded.records, [calm(), calm(agn=1)])
+        self.assertEqual(loaded.skipped, 4)
+
+    def test_missing_file_is_an_empty_history(self):
+        self.assertEqual(pr.History(self.path).load().records, [])
+
+    def test_default_path(self):
+        from unittest import mock
+        with mock.patch.object(pr.sys, "platform", "linux"), \
+                mock.patch.dict(os.environ, {"XDG_STATE_HOME": "/x/state"}):
+            self.assertEqual(pr.default_history_path(),
+                             Path("/x/state/proper-roger/history.jsonl"))
+        with mock.patch.object(pr.sys, "platform", "darwin"):
+            self.assertIn("Application Support", str(pr.default_history_path()))
+
+    def test_settings(self):
+        self.assertIsNone(pr.settings_from_argv(["--no-history"]).history)
+        self.assertEqual(pr.settings_from_argv(["--history", "h.jsonl"]).history,
+                         Path("h.jsonl"))
+        self.assertEqual(pr.settings_from_argv([], {"history": "~/h.jsonl"}).history,
+                         Path.home() / "h.jsonl")
+        self.assertEqual(pr.settings_from_argv([]).history, pr.default_history_path())
+
+
+class RatedSessionTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.path = Path(self.dir.name) / "history.jsonl"
+
+    def run_session(self, argv, keys, save_to=None):
+        settings = pr.settings_from_argv(["--no-play", "--seed", "4", "--clean"] + argv)
+        player = pr.Player(pr.SAMPLE_RATE, None, enabled=False)
+        history = pr.History(self.path).load()
+        if save_to:
+            history.path = save_to
+        stamp = pr.datetime(2026, 9, 27, 20, 0).astimezone()
+        session = pr.Session(settings, pr.load_corpus(CONFIG), player, out=io.StringIO(),
+                             history=history, now=lambda: stamp)
+        original = pr.sys.stdin
+        pr.sys.stdin = io.StringIO(keys)
+        try:
+            session.run()
+        finally:
+            pr.sys.stdin = original
+        return session, session.ui.out.getvalue()
+
+    def test_outcomes_are_recorded(self):
+        _, out = self.run_session(["--count", "4", "-w", "20", "-f", "15"],
+                                  "n\na\nn\ns\na\nn\nt\nn\n")
+        recs = pr.History(self.path).load().records
+        self.assertEqual([(r["agn"], r["qrs"], r["peek"]) for r in recs],
+                         [(0, 0, False), (1, 0, False), (1, 1, False), (0, 0, True)])
+        self.assertEqual((recs[0]["wpm"], recs[0]["fw"], recs[0]["level"]), (20, 15, 2))
+        self.assertTrue(all(r["t"].startswith("2026-09-27T20:00:00") for r in recs))
+        for text in ("PROPER ROGER", "ROGER after AGN", "ROGER after AGN + QRS", "PEEKED",
+                     "Elo 1000?", "your first rated session", "73 ", "1 Proper Roger (25%)",
+                     "2 AGN", "1 QRS", "1 peek"):
+            self.assertIn(text, out)
+        self.assertIn(recs[0]["text"], out)                     # shown after the Roger
+        self.assertEqual(out.count("\n< AGN?") + out.count("\n< PSE AGN"), 2)
+        self.assertEqual(out.count("\n< QRS PSE") + out.count("\n< PSE QRS"), 1)
+
+    def test_rating_carries_over_between_sessions(self):
+        first, _ = self.run_session(["--count", "3"], "n\nn\nn\n")
+        second, out = self.run_session(["--count", "1"], "n\n")
+        self.assertEqual(second.opening, first.rating.value)
+        self.assertIn("3 phrases on record", out)
+
+    def test_r_is_roger_like_on_the_air(self):
+        self.run_session(["--count", "3"], "r\nn\n\n")          # r, n and Enter
+        recs = pr.History(self.path).load().records
+        self.assertEqual([(r["agn"], r["peek"]) for r in recs], [(0, False)] * 3)
+
+    def test_qrs_then_qrq_one_proper_roger_at_a_time(self):
+        _, out = self.run_session(["--count", "6", "-w", "25", "-f", "18"],
+                                  "s\nr\nr\na\nr\nr\nr\nr\n")
+        recs = pr.History(self.path).load().records
+        self.assertEqual([r["fw"] for r in recs], [15, 15, 16, 16, 17, 18])
+        self.assertEqual({r["set_fw"] for r in recs}, {18})
+        self.assertIn("QRQ: Farnsworth 16, 2 to go", out)
+        self.assertIn("QRQ: back to your Farnsworth 18", out)
+        self.assertEqual(out.count("QRQ"), 3)                    # an AGN holds the speed
+
+    def test_quitting_does_not_rate_the_phrase(self):
+        self.run_session([], "n\nq\n")
+        self.assertEqual(len(pr.History(self.path).load().records), 1)
+
+    def test_turning_the_speed_down_rates_the_slowest(self):
+        self.run_session(["--count", "1", "-w", "20"], "-\n-\n+\nn\n")
+        rec = pr.History(self.path).load().records[0]
+        self.assertEqual((rec["wpm"], rec["fw"]), (18, 18))
+        self.assertEqual((rec["agn"], rec["qrs"]), (0, 0))       # tuning is free
+
+    def test_space_pauses_while_playing_and_asks_agn_once_done(self):
+        clock = FakeClock()
+        player = pr.Player(pr.SAMPLE_RATE, None, enabled=False, clock=clock)
+        session = pr.Session(pr.settings_from_argv(["--no-play", "--seed", "2"]),
+                             pr.load_corpus(CONFIG), player, out=io.StringIO())
+
+        class Keys:
+            raw = False
+            script = iter(["space", "space", "done", "space", "n"])
+
+            def read_key(self, timeout):
+                key = next(self.script)
+                if key == "done":
+                    clock.now += 60                              # the phrase has played out
+                    return None
+                return key
+
+        self.assertTrue(session.exercise(1, Keys()))
+        self.assertEqual(session.outcomes["agn"], 1)             # pause + resume were free
+
+    def test_read_along_is_off_the_record(self):
+        session, out = self.run_session(["--count", "2", "--show-text"], "n\nn\n")
+        self.assertIn("off the record (--show-text)", out)
+        self.assertFalse(self.path.exists())
+        self.assertNotIn("PROPER ROGER", out)
+
+    def test_milestones_rank_up_and_best(self):
+        h = pr.History(self.path)
+        for _ in range(60):  # a settled rating just under Ragchewer
+            h.append(calm(level=1, words=3, wpm=15, fw=15, fist=0, vary=0, qsb=0, noise=0))
+        rating = pr.Rating(pr.RatingModel())
+        for rec in h.records:
+            rating.play(rec)
+        session, out = self.run_session(["--count", "10", "-d", "5", "-w", "30"], "n\n" * 10)
+        self.assertIn("5 Proper Rogers in a row", out)
+        self.assertIn("10 Proper Rogers in a row", out)
+        self.assertIn("RANK UP", out)
+        self.assertIn("new best", out)
+        self.assertIn("best run 10 ", out)                       # this session's run only
+
+    def test_save_error_is_a_warning_not_a_crash(self):
+        blocker = Path(self.dir.name) / "file"
+        blocker.write_text("")                                   # not a directory
+        _, out = self.run_session(["--count", "2"], "n\nn\n", save_to=blocker / "h.jsonl")
+        self.assertEqual(out.count("warning: cannot save"), 1)
+        self.assertIn("73", out)
+
+
+class StatsTests(unittest.TestCase):
+    sym = pr._symbols(io.StringIO())
+
+    def history(self, days_and_counts, **kw):
+        h = pr.History(Path("/nonexistent/history.jsonl"))
+        for day, count in days_and_counts:
+            for i in range(count):
+                t = pr.datetime(2026, 9, day, 20, i).isoformat(timespec="seconds")
+                h.records.append(calm(t=t, secs=30, **kw))
+        return h
+
+    def report(self, h, day=27):
+        return "\n".join(pr.stats_report(h, pr.RatingModel(), pr.UI(io.StringIO()),
+                                          today=pr.date(2026, 9, day)))
+
+    def test_empty(self):
+        self.assertIn("No phrases on record yet", self.report(self.history([])))
+
+    def test_report(self):
+        text = self.report(self.history([(20, 10), (21, 10), (25, 5), (26, 5), (27, 5)]))
+        for part in ("Elo ", "35 phrases", "17 min on air", "100% Proper Rogers",
+                     "streak 3 days", "best 3", "longest run 35", "d3", "20/15",
+                     "time to step up, try -d 4 or -f 17",
+                     "history: /nonexistent/history.jsonl"):
+            self.assertIn(part, text)
+        self.assertIn("last 8 days", text)
+
+    def test_streaks(self):
+        d = pr.date
+        days = [d(2026, 9, 1), d(2026, 9, 2), d(2026, 9, 3), d(2026, 9, 10), d(2026, 9, 11)]
+        self.assertEqual(pr.streaks(days, d(2026, 9, 11)), (2, 3))
+        self.assertEqual(pr.streaks(days, d(2026, 9, 12)), (2, 3))  # today still to play
+        self.assertEqual(pr.streaks(days, d(2026, 9, 13)), (0, 3))
+
+    def test_next_step(self):
+        self.assertIn("5 more phrases", pr.next_step(self.history([(27, 15)]).records))
+        hard = self.history([(27, 30)], peek=True).records
+        self.assertIn("ease off with -f 13 or -d 2", pr.next_step(hard))
+        mid = self.history([(27, 10)], agn=1).records + self.history([(27, 10)]).records
+        self.assertIn("sweet spot", pr.next_step(mid))
+        vary = self.history([(27, 25)], wpm=19, fw=14, set_wpm=20, set_fw=15).records
+        self.assertIn("at d3 20/15", pr.next_step(vary))
+
+    def test_sparkline(self):
+        self.assertEqual(pr.sparkline([1, 2, 3], "abc"), "abc")
+        self.assertEqual(pr.sparkline([5, 5], "abc"), "bb")
+
+    def test_main_stats(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "h.jsonl"
+            pr.History(path).append(calm())
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = pr.main(["--stats", "--history", str(path)])
+        self.assertEqual(code, 0)
+        self.assertIn("Elo 1", out.getvalue())
+        self.assertIn(str(path), out.getvalue())
+
+
+class HeatmapTests(unittest.TestCase):
+    def records(self, minutes_by_day):
+        return [calm(t=pr.datetime(2026, 9, day, 20, 0).isoformat(timespec="seconds"),
+                     secs=minutes * 60) for day, minutes in minutes_by_day]
+
+    def test_levels(self):
+        self.assertEqual([pr.heat_level(m) for m in (None, 0.2, 4.9, 5, 10, 19, 20, 90)],
+                         [0, 1, 1, 2, 3, 3, 4, 4])
+
+    def test_three_weeks_monday_first(self):
+        ui = pr.UI(io.StringIO())
+        today = pr.date(2026, 9, 24)                                  # a Thursday
+        lines = pr.heatmap(self.records([(7, 30), (22, 12), (24, 3)]), ui, today)
+        self.assertEqual(lines[0].split(), ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"])
+        self.assertEqual([l.split()[:2] for l in lines[1:4]],
+                         [["Sep", "7"], ["Sep", "14"], ["Sep", "21"]])
+        heat = ui.sym["heat"]
+        self.assertEqual(lines[1].split()[2], heat[4])                  # Mon 7th, 30 min
+        self.assertEqual(lines[3].split()[2:], [heat[0], heat[3], heat[0], heat[1]])  # to today
+        self.assertIn("streak 1 day", lines[4])
+        self.assertIn("today 3 min", lines[4])
+
+    def test_nudge_keeps_the_streak_alive(self):
+        ui = pr.UI(io.StringIO())
+        lines = pr.heatmap(self.records([(22, 5), (23, 5)]), ui, pr.date(2026, 9, 24))
+        self.assertIn("keep your 2-day streak alive", lines[-1])
+
+    def test_shown_when_a_session_starts(self):
+        with tempfile.TemporaryDirectory() as d:
+            history = pr.History(Path(d) / "h.jsonl")
+            history.append(calm(secs=120))
+            settings = pr.settings_from_argv(["--no-play", "--count", "1"])
+            session = pr.Session(settings, pr.load_corpus(CONFIG),
+                                 pr.Player(pr.SAMPLE_RATE, None, enabled=False),
+                                 out=io.StringIO(), history=history,
+                                 now=lambda: pr.datetime(2026, 9, 27, 21, 0).astimezone())
+            original = pr.sys.stdin
+            pr.sys.stdin = io.StringIO("q\n")
+            try:
+                session.run()
+            finally:
+                pr.sys.stdin = original
+        self.assertIn("Mo Tu We Th Fr Sa Su", session.ui.out.getvalue())
+
+
+class MeterTests(unittest.TestCase):
+    rate = pr.SAMPLE_RATE
+
+    def test_labels(self):
+        self.assertEqual([pr.s_label(s) for s in (0, 3.4, 7.2, 9, 10.7, 12.4, 20)],
+                         ["S0", "S3", "S7", "S9", "S9+10", "S9+20", "S9+30"])
+
+    def test_tone_reads_the_station_and_silence_reads_nothing(self):
+        tone = pr._tone(self.rate, 600, int(32767 * 0.5), self.rate, 80)
+        track = pr.meter_track(tone + pr._silence(self.rate * 2), self.rate, 0.5, 7.0)
+        self.assertAlmostEqual(track[5][1], 7.0, delta=0.1)
+        self.assertEqual(track[-1], (False, 0.0))
+        falling = [v for _, v in track[20:40]]
+        self.assertEqual(falling, sorted(falling, reverse=True))     # slow release...
+        self.assertAlmostEqual(falling[0] - falling[1], pr.METER_DECAY, delta=0.01)
+        self.assertGreater(track[1][1], 6.5)                          # ...instant attack
+
+    def test_noise_floor_rises_with_noise(self):
+        calm_band = ["--fist", "0", "--vary", "0", "--qsb", "0", "--seed", "1"]
+        quiet = pr.settings_from_argv(calm_band + ["--noise", "0.1"])
+        loud = pr.settings_from_argv(calm_band + ["--noise", "0.5"])
+        floors = []
+        for st in (quiet, loud):
+            audio, _ = pr.Transmitter(st).render("E", 25, 25)
+            track = pr.meter_track(audio, self.rate, st.volume, 7.0)
+            floors.append(min(v for _, v in track[2:]))
+        self.assertGreater(floors[1], floors[0] + 1)                 # about 14 dB: > 2 S-units
+
+    def test_tx_frames(self):
+        side, _ = pr.Transmitter(pr.settings_from_argv([])).sidetone("T", 25)
+        track = pr.meter_track(side + pr._silence(self.rate), self.rate, 0.5, 7.0, len(side))
+        frames = len(side) // int(self.rate * pr.METER_FRAME_SECONDS)
+        self.assertTrue(all(is_tx for is_tx, _ in track[:frames]))
+        self.assertFalse(track[-1][0])
+        self.assertGreater(max(v for is_tx, v in track if is_tx), 0.9)
+
+    def test_label_matches_the_lit_segments(self):
+        ui = pr.UI(io.StringIO())
+        for tenth in range(0, 200):
+            value = tenth / 10
+            bar = pr.meter_bar((False, value), ui)
+            lit = bar.count(ui.sym["lit"])
+            label = bar.split()[0]
+            expected = f"S{lit}" if lit < 9 else ("S9" if lit == 9 else f"S9+{(lit - 9) * 10}")
+            self.assertEqual(label, expected if lit else "S0", value)
+
+    def test_bar(self):
+        ui = pr.UI(io.StringIO())
+        lit, unlit = ui.sym["lit"], ui.sym["unlit"]
+        self.assertEqual(pr.meter_bar((False, 5.2), ui), "S5    " + lit * 5 + unlit * 7)
+        self.assertEqual(pr.meter_bar((False, 12.4), ui), "S9+20 " + lit * 11 + unlit)
+        self.assertEqual(pr.meter_bar((True, 0.5), ui), "TX    " + lit * 6 + unlit * 6)
+        self.assertEqual(pr.meter_bar(None, ui), " " * 6 + unlit * 12)
+
+    def test_each_station_has_its_own_strength(self):
+        tx = pr.Transmitter(pr.settings_from_argv(["--seed", "5"]))
+        strengths = set()
+        for _ in range(20):
+            tx.new_station()
+            self.assertTrue(pr.STRENGTH_RANGE[0] <= tx.strength <= pr.STRENGTH_RANGE[1])
+            strengths.add(round(tx.strength, 3))
+        self.assertGreater(len(strengths), 10)
+
+    def test_meter_does_not_change_seeded_audio(self):
+        a = pr.Transmitter(pr.settings_from_argv(["--seed", "5"]))
+        b = pr.Transmitter(pr.settings_from_argv(["--seed", "5"]))
+        b.new_station()
+        a.new_station()
+        self.assertEqual(a.render("TNX FER CALL", 25, 18), b.render("TNX FER CALL", 25, 18))
+
+    def test_only_on_a_live_terminal(self):
+        settings = pr.settings_from_argv(["--no-play"])
+        session = pr.Session(settings, pr.load_corpus(CONFIG),
+                             pr.Player(pr.SAMPLE_RATE, None, enabled=False), out=io.StringIO())
+        self.assertFalse(session.meter_on)
+        session.meter_on = True                                        # as on a terminal
+        session.start("TNX FER CALL")
+        self.assertTrue(session._track)
+        self.assertRegex(session.status_text(False), r"^S\d")
+
+    def test_settings(self):
+        self.assertTrue(pr.settings_from_argv([]).meter)
+        self.assertFalse(pr.settings_from_argv(["--no-meter"]).meter)
+        self.assertFalse(pr.settings_from_argv([], {"meter": False}).meter)
+
+
+class ClipTests(unittest.TestCase):
+    def test_colour_codes_do_not_count_and_are_never_cut(self):
+        red = "\033[31mABC\033[0m"
+        self.assertEqual(pr.clip("xx" + red + "yy", 10), "xx" + red + "yy")
+        self.assertEqual(pr.clip("xx" + red + "yy", 3), "xx\033[31mA\033[0m")
+        self.assertEqual(pr.clip("xx" + red + "yy", 6), "xx" + red + "y\033[0m")
+        self.assertEqual(pr.clip("plain text", 5), "plain\033[0m")
+        self.assertEqual(pr.clip("plain", 5), "plain")
+        self.assertNotRegex(pr.clip("\033[1;31m" + "#" * 50, 7), r"\033\[[0-9;]*$")

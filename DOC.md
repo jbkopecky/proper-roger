@@ -7,13 +7,18 @@ is the *CW Ragchew RX Trainer* spec this MVP was written from.
 ## 1. Goals and constraints
 
 - **RX comprehension only.** Play a realistic ragchew fragment, let the
-  operator replay, pause, reveal and move on. No scoring, no typing, no QSO
-  simulation, no gamification.
+  operator ask for it again (`AGN?`), slower (`QRS`), peek, or Roger it and
+  move on. No typing and no sending practice: your sidetone only plays
+  what the keys ask for.
+- **Progress you can trust.** Since 0.3, every Roger is a game in an Elo
+  rating against the phrase's own difficulty, with ranks, runs, streaks and
+  `--stats`. It is crunchy but honest. The rating is replayed from a plain
+  history file, so a change of weights re-rates everything.
 - **Ultra portable.** Standard library only. One script (`pr.py`), one data
   file (`config.toml`). No `pip install`, no virtualenv, no network. It runs
   with any Python 3.11+ on macOS, Linux and Windows.
 - **Small.** No terminal UI framework, no plugin system, no generic
-  abstractions. Roughly 1400 lines including docstrings.
+  abstractions. Roughly 2400 lines including docstrings.
 - **Real but peaceful by default.** Out of the box you hear a calm band: a
   discreet human fist (5 %), stations +/- 1 WPM apart, gentle fading (0.2)
   and a soft noise floor (0.15) through a 400 Hz soft filter, at a 600 Hz
@@ -36,7 +41,9 @@ Version 0.1 had its own 200-line YAML reader. Raising the minimum to Python
 
 ```text
 pr.py          the whole program (see section 4 for its internal sections)
-config.toml    corpus (vocabulary, ranges, templates, station) and CLI defaults
+config.toml    corpus (vocabulary, ranges, templates, station), CLI defaults,
+               your sidetone calls and the Elo weights
+history.jsonl  your rated phrases, outside the repo (see 4.12)
 test_pr.py     unittest suite, python3 -m unittest -v
 README.md      user guide
 DOC.md         this file
@@ -49,10 +56,13 @@ main()
   parse argv                          argparse, build_parser()
   load_corpus(--config)               tomllib -> Corpus, validated
   resolve_settings(args, defaults)    CLI > config.toml defaults > built-ins, validated
+  --stats?   show_stats()             replay the history, print the report, exit
   --export?  export(settings, corpus) phrases -> one WAV + a .txt, then exit
+  History(--history).load()           unless --no-history / --no-play
   find_player(--player)               unless --no-play
-  Session(settings, corpus, Player).run()
-     print header and key help
+  Session(settings, corpus, Player, history).run()
+     replay the history into a Rating
+     print header, Elo line and key help
      with Keyboard():                 cbreak mode on a TTY
         for each exercise:
            phrase = Generator.next()            new station? -> Transmitter.new_station()
@@ -60,6 +70,10 @@ main()
                                      -> render(text, timing, tone, volume, conditions, rng)
            Player.load(samples, word_starts); Player.play(0)
            loop: redraw status line when state changes, read one key, act
+                 a / s: sidetone call + gap + phrase (or slow + normal)
+                 r: Rating.play(record), History.append(record), verdict,
+                    then your R R on the sidetone
+     print the session summary
 ```
 
 Exit code is 0 on a normal quit (`q`, Esc, Ctrl-C, EOF) or a finished
@@ -200,9 +214,10 @@ conditions are applied once per phrase rather than while playing.
 turning conditions on does not change the phrases), and for `--vary N` a
 per-station offset: up to +/- N WPM on both speeds (clamped to 5-60 and
 `farnsworth <= wpm`) and up to +/- 60 Hz on the tone. `new_station()`
-redraws the offsets. `render(phrase, wpm, farnsworth, slow=False)` applies
-them. `slow=True` also lowers the effective speed to two thirds, for the `s`
-key.
+redraws the offsets. `render(phrase, wpm, farnsworth)` applies them.
+`new_station()` also draws the station's `strength` for the S-meter (4.14),
+from a third `random.Random`, so the meter never changes a seed's audio.
+`sidetone(text, wpm)` is you: no conditions, no offsets.
 
 ### 4.5 Playback (`find_player`, `Player`)
 
@@ -362,16 +377,40 @@ touching the file system.
   character speed is lower, so `-` then `+` from 16/15 gives back 16/15.
   `]`/`[` change the effective speed within `[5, wpm]`; reaching `wpm`
   turns Farnsworth off.
-- The status line hides `[r] replay` once a phrase is done, since space
-  replays then.
+- The status line hides `[a] agn` once a phrase is done, since space
+  asks AGN then. On a rated session it ends with `Elo 1412`, and it is
+  cut to the terminal width, since a wrapped line can no longer be
+  rewritten in place. Verdicts are coloured on a TTY unless `NO_COLOR` is set.
 - A player failure is printed once as a `warning:` line.
 - `t` toggles the reveal and prints the phrase (or `(text hidden)`) as a
   permanent line, so revealed text stays in the scrollback. With `--vary` the
   speed the station actually sent is appended: `... HI   (17 WPM)`.
-- `r` reloads the normal-speed rendering and plays it from the top. `s`
-  plays the slow rendering (spacing at two thirds of the effective speed),
-  one second of silence, then the normal rendering, as one buffer with word
-  marks for both parts, so pause/resume still work inside it.
+- `a` (and space once the phrase is over) is `ask_agn()`. `s` is
+  `ask_qrs()`: `qrs_drop` grows by `QRS_STEP_WPM` (3), never below 5 WPM,
+  and the phrase is re-rendered at `sent_fw = farnsworth - qrs_drop`, the
+  characters still at `--wpm`. The drop outlives the phrase: every render
+  uses `sent_fw`, and each Proper Roger takes `QRQ_STEP_WPM` (1) off it
+  with a `▲ QRQ` note. An AGN or a peek holds it. `[`/`]` start from
+  `sent_fw` and clear the drop, so manual control always wins. Both keys
+  go through `_send_then()`. It echoes the call as a `◀ AGN?` line, renders
+  it with `Transmitter.sidetone()`, which uses no conditions and no `--vary`
+  at your character speed and tone, at `SIDETONE_LEVEL` of the volume, and
+  plays sidetone + `SIDETONE_GAP_SECONDS` of silence + the phrase as one
+  buffer. The buffer has word marks for every part, so pause/resume still
+  work inside it. Because it is one buffer, the "receiver" is naturally
+  silent while you send. With `--no-sidetone`, only the phrase is played.
+- `r` (or `n`, Enter) is `roger()`. It prints the phrase dimmed if it was hidden,
+  so you can check your copy, then scores and saves it (4.12) and prints the
+  verdict and any notes (a run milestone, a rank change, a new best).
+  Finally it plays your `roger` call (after a Proper Roger) or `ack` call
+  (otherwise) and waits for it to end. On a TTY any key cuts it short, and
+  `q` still quits. In line mode it just waits, since the next line is the
+  next command.
+- A phrase is rated at the easiest speeds it was *heard* at:
+  `_note_heard()` runs after each render and keeps the record with the
+  lowest D. So `-` to copy a phrase is free, but it is not a free win at
+  the harder speed. Speeds are the ones the station actually sent (with
+  `--vary`); `set_wpm`/`set_fw` keep what you chose, for `--stats`.
 - Quitting (`q`, Esc, Ctrl-C, Ctrl-D, EOF) always goes through `finally`:
   the player is stopped, the temp file removed, the terminal restored.
 
@@ -385,12 +424,98 @@ text goes to `FILE.txt`, one numbered line per phrase, with a blank line
 before each new station. A seeded export gives the same phrases as a seeded
 session.
 
+### 4.12 Rating and history (`RatingModel`, `Rating`, `History`)
+
+- `phrase_rating(model, rec)` is D, a sum of independent terms (README,
+  "Your CW RX Elo"). The speed term uses a geometric blend
+  `wpm^(1-s) · fw^s` with `s = farnsworth_share = 0.7`, on a log2 scale:
+  every doubling of the blended speed is worth `speed` points. Length is
+  also log2, relative to `words_ref`, so one-word blocks come out slightly
+  below the base. Noise is scaled by `sqrt(filter / 400)`, the same law as
+  the audio (4.4b).
+- `copy_result()` is S: 1, or `agn` / `qrs` for the first request (a QRS in
+  the mix counts as a QRS) minus `extra` for each further one, floored at 0.
+  A peek is 0.
+- `Rating.play(rec)` is textbook Elo with `k_provisional` for the first
+  `provisional` phrases (shown as `1043?`) and a `floor`. It returns a
+  `Game` with D, S, E, before/after, the run of Proper Rogers, whether it is
+  a new best (only once settled, so the first session does not spam it), and
+  the ranks before and after.
+- `RatingModel` is a frozen dataclass whose defaults match config.toml's
+  `[rating]`. `rating_model_from()` accepts only known fields, checks the
+  types and ranges, and sorts `ranks`.
+- `History` is JSON Lines. A record holds what is needed to re-rate the
+  phrase (`wpm`, `fw`, `level`, `words`, the conditions), how it was copied
+  (`agn`, `qrs`, `peek`, `secs`), the setup chosen (`set_wpm`, `set_fw`,
+  `mode`), a local ISO timestamp with offset, and the `text`. It never holds
+  a rating. Appending opens, writes one line and closes, so a crash loses at
+  most the phrase in flight. Unreadable lines are skipped and counted, never
+  fatal. A failed append is one `warning:` line and the session goes on.
+- The default path follows each platform's convention
+  (`default_history_path()`): Application Support on macOS,
+  `XDG_STATE_HOME` or `~/.local/state` on Linux, `LOCALAPPDATA` on Windows.
+  It is state, not configuration: it is not kept next to `pr.py`.
+- Off the record: `--no-history` or `--no-play` (no `History` at all), and
+  `--show-text` (a `History` exists but `Session.rated` is false and no
+  verdict is printed: reading along is not copying). Quitting mid-phrase
+  does not rate it.
+
+### 4.13 Stats (`stats_report`)
+
+`--stats` replays the whole history, keeping the rating at the end of each
+day. From that it prints:
+- the Elo, rank and best, with a bar to the next rank;
+- the phrase count, time on air (the sum of `secs`, the time from a phrase's
+  start to its Roger) and Proper Roger rates;
+- `streaks()`: consecutive days, where a day not yet played does not break
+  the current streak;
+- a one-character-per-day `sparkline()` over the last 30 days, where a day
+  off repeats the previous value;
+- the setups of the last 30 days (`setup_of()`: level and *chosen* speeds);
+- `next_step()`: at the latest setup, the last 50 phrases. Below 20 it asks
+  for more. At 80 % or more Proper Rogers it suggests the next level, then
+  +2 Farnsworth, then +2 WPM. Under 40 % it offers -2 Farnsworth or a lower
+  level. In between is the sweet spot.
+- `heatmap()`, also printed when a session with a history starts: three
+  calendar weeks, Monday first, ending with the current one (future days
+  blank). A day's level comes from its minutes on air (`HEAT_MINUTES`: any,
+  5, 10, 20). On a colour terminal, cells are solid blocks in `heat1`-`heat4`,
+  otherwise shade characters. The last line is a legend, the streak and a
+  nudge when today has not been played yet.
+
+### 4.14 S-meter (`meter_track`, `meter_bar`)
+
+- `Session._play()` is the only way audio is played. It loads the buffer
+  and, when the meter is on, computes its `meter_track()` once: per 50 ms
+  frame, the RMS of the samples actually played. For the receiver that is
+  `strength + dB(rms / full carrier) / 6` S-units, with an instant attack
+  and a release of `METER_DECAY` S per frame, like AGC. So a key-down reads
+  the station, word gaps fall to the noise floor that comes through the
+  filter, and QSB moves both. The first `tx_samples` (your sidetone) are
+  frames of key-down level instead, shown as `TX`.
+- `meter_text()` maps `Player.position()`, minus `METER_LAG_SECONDS` for
+  the player's start-up, to a frame. Paused shows where it stopped. Done
+  shows an unlit bar.
+- `meter_bar()` has 12 segments: S1-S9, then +10/+20/+30 dB, drawn as runs
+  of one colour code each. `s_label()` reads the same thresholds, so the
+  label always matches the lit segments.
+- `meter_on` needs `--meter` (the default), a TTY and a real player. Off a
+  TTY, every change of the status line would print a new line. The key
+  poll drops to 50 ms so the bar moves smoothly.
+- `UI.status()` cuts the line to the terminal width with `clip()`, which
+  counts only visible characters, never cuts a colour code in half, and
+  resets the colour after a cut. The Elo comes before the key hints, so a
+  narrow terminal loses hints first.
+- Colours come from one `STYLES` table that uses only the 16 standard ANSI
+  colours (30-37, 90-97, bold, dim), so the terminal's own scheme decides
+  what they look like. `NO_COLOR` or a non-TTY output turns them off.
+
 ## 5. config.toml reference
 
 ```toml
 [defaults]
-wpm = 18            # 5-60
-# farnsworth = 15   # leave out = same as wpm
+wpm = 25            # 5-60
+farnsworth = 18     # leave out = same as wpm
 difficulty = 2      # 1-5
 mode = "mixed"      # "blocks" | "phrases" | "mixed"
 tone = 650          # 100-3000 Hz
@@ -404,6 +529,20 @@ qrm = 0.0           # 0.0-1.0
 filter = 400        # 100-1000 Hz, receiver CW filter with noise or qrm
 shape = "soft"      # "soft" | "sharp"
 # player = "ffplay -nodisp -autoexit -loglevel quiet"
+sidetone = true     # AGN? / QRS PSE / R R on your own sidetone
+meter = true        # live S-meter on a terminal
+# history = "~/cw/history.jsonl"
+
+[sidetone]
+agn = ["AGN?", "PSE AGN"]      # every entry must be sendable in Morse
+qrs = ["QRS PSE", "PSE QRS"]
+roger = ["R R", "R FB", "FB"]
+ack = ["R", "OK"]
+
+[rating]                       # every RatingModel field; see the shipped file
+k = 24
+agn = 0.5
+ranks = [{ at = 0, name = "SWL" }, { at = 900, name = "Novice" }]
 
 [station]
 keys = ["name", "qth", "rig", ...]
@@ -467,6 +606,15 @@ python3 -m unittest -v
 | player        | state machine of the silent player; with a fake clock, pause snaps to the word start and resume adds a lead-in; a real subprocess that fails is reported once, one that succeeds or is stopped is not |
 | keyboard      | through an `os.pipe()`: lone Esc, arrow/function sequences ignored, plain keys, timeout (POSIX) |
 | session       | scripted line-mode sessions: count is honoured, reveal prints the seeded phrase, speed keys update the header, EOF quits; Farnsworth kept across `-`/`+`, status line, player warning, key help, slow then normal replay, new-station titles, header and reveal with conditions |
+| sidetone      | AGN = dry sidetone then the phrase as heard, below the received level; calls come from the config and are checked for Morse; `--no-sidetone` just replays; `sidetone` in config and on the CLI |
+| rating        | the base phrase is exactly 1000, the README worked example (1422; +13 / +1 / -4 / -11), every term makes a phrase harder in the right direction and Farnsworth spacing weighs more than character speed, S values, a draw at equal ratings moves nothing, provisional K is double, runs, rank up and bests, the floor, `rank_for`, config overrides and every rejected value |
+| history       | round trip, bad lines skipped and counted, missing file, default path per platform, `--history`, `--no-history`, `~` in config |
+| rated session | outcomes recorded per key sequence and shown after the Roger; calls echoed; rating carried over between sessions; quitting does not rate; tuning the speed down is free and rated at the slowest; space pauses while playing and is an AGN once done; read-along is off the record; run milestones, rank up and best within a session; a save error warns once |
+| QRS / QRQ     | QRS lowers only the Farnsworth speed, keeps the characters and the tone, sticks to the next phrase, never goes below 5 WPM, `]` takes over; a scripted session goes 15, 15, 16, 16 (an AGN holds), 17, 18 with the right QRQ notes |
+| heatmap       | minute levels, three weeks Monday first with future days blank, the streak nudge, shown when a session starts |
+| S-meter       | S labels and their agreement with the lit segments at every tenth of an S-unit, a tone reads the station and silence nothing, instant attack and slow release, the noise floor rises with `--noise`, TX frames, the bar, per-station strength, seeded audio unchanged, only on a live terminal, settings |
+| clip          | colour codes do not count, are never cut, and the colour is reset after a cut |
+| stats         | empty history, the full report, streaks with today still to play, every `next_step` branch including `--vary` setups, sparkline, `main --stats` |
 | export        | WAV format and length, numbered text with blank lines between stations, same first phrase as a seeded generator, 20 phrases by default, unwritable path exits 2 |
 
 Real audio and single-key input cannot run under `unittest` without a
@@ -525,12 +673,19 @@ Ideas that fall out of the current structure with little code:
 - QRN crashes: short bursts of unfiltered noise at random times, added in
   `_apply_conditions()` like the QRM.
 - Export with each phrase played twice (slow, then normal), reusing the same
-  concatenation as `Session.slow_replay()`.
+  concatenation as `Session.ask_qrs()`.
+- `--auto`: a matchmaker that picks the Farnsworth speed or the level so
+  that D sits just above your Elo, using `phrase_rating()` backwards.
+- Fit the `[rating]` weights to your own history with a small logistic
+  regression (standard library, gradient descent), so the formula learns
+  whether noise or speed is what really costs *you*.
 - Region-specific names and QTHs: a second `config-xx.toml` and `--config`.
 
 Things the spec asks to keep out: sending practice, keyer input, two-way
-QSO simulation, pileups, scoring, typing answers, statistics, propagation,
-contest logic, browser UI, LLM or network calls.
+QSO simulation, pileups, typing answers, propagation, contest logic,
+browser UI, LLM or network calls. Scoring and statistics were on that list
+too, until 0.3 found a form that needs no typing: the rating comes only
+from the keys you already press.
 
 ## 10. Abbreviations used in the corpus
 
