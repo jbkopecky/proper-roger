@@ -68,8 +68,8 @@ that. proper-roger does.
   win, draw or lose. You get ranks from SWL to Legend, runs of Proper
   Rogers, streaks, personal bests, and `--stats` to tell you what to try
   next.
-- **Nothing to install.** One Python file, standard library only. No pip, no
-  account, no network, no browser.
+- **Nothing to install.** One small folder of Python, standard library
+  only. No pip, no account, no network, no browser.
 
 ## Quick start
 
@@ -572,7 +572,10 @@ Template rules:
 python3 -m unittest -v     # 135 tests, a few seconds
 ```
 
-[DOC.md](DOC.md) explains how it all works: the Farnsworth timing maths,
+The code is in `proper_roger/`, one plain module per concern (Morse
+timing, audio, the receiver filter, the player, the rating, the S-meter,
+the session...), and `pr.py` just starts it. [DOC.md](DOC.md) explains how
+it all works: the Farnsworth timing maths,
 prosigns, the I/Q receiver filter, the band conditions, stations,
 pause/resume on word boundaries, the keyboard handling on each platform,
 and the rating and history.

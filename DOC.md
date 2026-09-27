@@ -1,6 +1,6 @@
 # proper-roger: technical documentation
 
-This document describes how `pr.py` works and why it is built the way it is.
+This document describes how proper-roger works and why it is built the way it is.
 The user-facing guide is [README.md](README.md); the original specification
 is the *CW Ragchew RX Trainer* spec this MVP was written from.
 
@@ -14,11 +14,13 @@ is the *CW Ragchew RX Trainer* spec this MVP was written from.
   rating against the phrase's own difficulty, with ranks, runs, streaks and
   `--stats`. It is crunchy but honest. The rating is replayed from a plain
   history file, so a change of weights re-rates everything.
-- **Ultra portable.** Standard library only. One script (`pr.py`), one data
-  file (`config.toml`). No `pip install`, no virtualenv, no network. It runs
-  with any Python 3.11+ on macOS, Linux and Windows.
+- **Ultra portable.** Standard library only. A launcher (`pr.py`), one
+  package of plain modules (`proper_roger/`) and one data file
+  (`config.toml`). No `pip install`, no virtualenv, no network. It runs with
+  any Python 3.11+ on macOS, Linux and Windows. Copy the folder and go.
 - **Small.** No terminal UI framework, no plugin system, no generic
-  abstractions. Roughly 2400 lines including docstrings.
+  abstractions. Roughly 2400 lines including docstrings, in 14 modules of
+  10 to 450 lines, each one readable on its own.
 - **Real but peaceful by default.** Out of the box you hear a calm band: a
   discreet human fist (5 %), stations +/- 1 WPM apart, gentle fading (0.2)
   and a soft noise floor (0.15) through a 400 Hz soft filter, at a 600 Hz
@@ -27,7 +29,7 @@ is the *CW Ragchew RX Trainer* spec this MVP was written from.
 The stdlib-only constraint drove these design decisions, each of which would
 usually be solved by a dependency:
 
-| need              | usual dependency        | what pr.py does instead                          |
+| need              | usual dependency        | what proper-roger does instead                   |
 |-------------------|-------------------------|--------------------------------------------------|
 | corpus file       | PyYAML                  | TOML, read by the standard `tomllib` (3.11+)     |
 | audio synthesis   | numpy                   | `array('h')` + `math.sin`, tones cached per length |
@@ -40,14 +42,41 @@ Version 0.1 had its own 200-line YAML reader. Raising the minimum to Python
 ## 2. Files
 
 ```text
-pr.py          the whole program (see section 4 for its internal sections)
-config.toml    corpus (vocabulary, ranges, templates, station), CLI defaults,
-               your sidetone calls and the Elo weights
-history.jsonl  your rated phrases, outside the repo (see 4.12)
-test_pr.py     unittest suite, python3 -m unittest -v
-README.md      user guide
-DOC.md         this file
+pr.py            launcher: checks for Python 3.11+, then proper_roger.cli.main()
+proper_roger/    the program, one module per concern (below)
+config.toml      corpus (vocabulary, ranges, templates, station), CLI defaults,
+                 your sidetone calls and the Elo weights
+tests/           unittest suite, one test_<module>.py per module, plus support.py
+                 (python3 -m unittest -v)
+history.jsonl    your rated phrases, outside the repo (see 4.12)
+README.md        user guide
+DOC.md           this file
 ```
+
+The modules, in dependency order. Each one imports only modules above it,
+so there are no import cycles and any module can be read (or tested)
+knowing only what comes before it:
+
+| module           | holds                                                        | section |
+|------------------|--------------------------------------------------------------|---------|
+| `limits`         | speed, tone and filter limits, the sample rate               |         |
+| `morse`          | the Morse table, prosigns, PARIS / Farnsworth timing         | 4.2-4.3 |
+| `receiver`       | the receiver's I/Q CW filter                                 | 4.4b    |
+| `audio`          | `render()`, band conditions, QRM, WAV files                  | 4.4-4.4b |
+| `player`         | the system player, pause / resume                            | 4.5     |
+| `terminal`       | `Keyboard`, `UI`, colours, `clip()`, `KEYS_HELP`             | 4.6, 4.10 |
+| `rating`         | `RatingModel`, `Rating`, `History`                           | 4.12    |
+| `corpus`         | loading and checking config.toml, `Generator`                | 4.1, 4.7-4.8 |
+| `settings`       | argparse, config defaults, `Settings`                        | 4.9     |
+| `transmitter`    | per-station speed, pitch and strength; your sidetone         | 4.4c    |
+| `meter`          | the S-meter                                                  | 4.14    |
+| `stats`          | `--stats`, the heatmap, next step                            | 4.13    |
+| `session`        | `Session`: one practice session                              | 4.10    |
+| `cli`            | `main()`, `--export`, `--stats`                              | 3, 4.11 |
+
+`pr.py` stays at the top so that `python3 pr.py` and `uv run pr.py` work
+from anywhere. Python puts the script's folder on the import path, so the
+package next to it is found without installing anything.
 
 ## 3. Runtime flow
 
@@ -81,9 +110,9 @@ export, and 2 on an invalid option, a broken corpus or an export file that
 cannot be written, with the message on stderr. On Python older than 3.11 the
 script stops at once with a message suggesting `uv run pr.py`.
 
-## 4. Inside pr.py
+## 4. Inside proper_roger
 
-### 4.1 Config file (`tomllib`)
+### 4.1 Config file (`tomllib`): `corpus`
 
 `config.toml` is standard TOML, read with `tomllib.load()`. TOML fits the
 corpus well: strings are always quoted (no `NO` turning into `false`, no
@@ -95,7 +124,7 @@ TOML has no `null`, so an absent key means "use the built-in default". This
 is how `farnsworth` is turned off. A `--config` ending in `.yaml`/`.yml` is
 refused with a hint, for users upgrading from 0.1.
 
-### 4.2 Morse table and prosigns
+### 4.2 Morse table and prosigns: `morse`
 
 `MORSE` maps `A-Z`, `0-9` and `. , ? / = + - @` to dit/dah strings. `=` is
 BT and `+` is AR.
@@ -110,7 +139,7 @@ letters concatenated, so they are sent with only element gaps between them
 what has no code, including a stray `<` or `>`. It validates the corpus at
 load time and, as a last safety net, each generated phrase.
 
-### 4.3 Timing and Farnsworth (`timing_for`, `timeline`)
+### 4.3 Timing and Farnsworth (`timing_for`, `timeline`): `morse`
 
 Standard PARIS timing with `unit = 1.2 / wpm` seconds:
 
@@ -135,7 +164,7 @@ standard unit. `timeline(text, timing)` turns a phrase into a list of
 `(tone_on, seconds)` segments with no leading or trailing silence;
 `duration()` sums it.
 
-### 4.4 Audio synthesis (`render`)
+### 4.4 Audio synthesis (`render`): `audio`
 
 - 16 kHz, 16-bit signed mono, built in an `array('h')`.
 - Every tone segment is a sine at `--tone` Hz with a 5 ms raised-cosine
@@ -151,7 +180,7 @@ standard unit. `timeline(text, timing)` turns a phrase into a list of
 
 On a 10-second phrase this takes a few milliseconds in pure Python.
 
-### 4.4b Band conditions (`Conditions`)
+### 4.4b Band conditions (`Conditions`): `audio`, `receiver`
 
 `render(..., conditions, rng)` can make the CW sound like it came off the
 air. Everything is drawn from `rng`, so a seeded session sounds the same
@@ -207,7 +236,7 @@ The mix is done in floats and clipped to 16 bits. With everything on, a
 0.1-0.3 s). That is acceptable when a phrase starts, and it is why
 conditions are applied once per phrase rather than while playing.
 
-### 4.4c Per-station sending (`Transmitter`)
+### 4.4c Per-station sending (`Transmitter`): `transmitter`
 
 `Transmitter` sits between the session and `render()`. It holds its own
 `random.Random` (seeded from `--seed`, separate from the phrase generator so
@@ -219,7 +248,7 @@ redraws the offsets. `render(phrase, wpm, farnsworth)` applies them.
 from a third `random.Random`, so the meter never changes a seed's audio.
 `sidetone(text, wpm)` is you: no conditions, no offsets.
 
-### 4.5 Playback (`find_player`, `Player`)
+### 4.5 Playback (`find_player`, `Player`): `player`
 
 Playback goes through whatever the operating system already has:
 
@@ -259,7 +288,7 @@ The temp-file approach was preferred to `SIGSTOP`/`SIGCONT` on the player
 because it behaves identically on all three platforms and also works with
 `winsound`, which cannot be suspended.
 
-### 4.6 Keyboard (`Keyboard`)
+### 4.6 Keyboard (`Keyboard`): `terminal`
 
 - POSIX TTY: `termios` saves the terminal state, `tty.setcbreak` turns off
   line buffering and echo while keeping signal handling (Ctrl-C still raises
@@ -277,7 +306,7 @@ because it behaves identically on all three platforms and also works with
 The terminal state is always restored in `__exit__`, including after an
 exception.
 
-### 4.7 Corpus model (`load_corpus`, `corpus_from_data`)
+### 4.7 Corpus model (`load_corpus`, `corpus_from_data`): `corpus`
 
 ```text
 [defaults]  wpm, farnsworth, difficulty, mode, tone, volume, player,
@@ -303,7 +332,7 @@ Validation happens once at start-up and fails with a precise message:
   at least one template each;
 - unknown keys under `[defaults]` and wrongly typed defaults are refused.
 
-### 4.8 Phrase generation (`Generator`)
+### 4.8 Phrase generation (`Generator`): `corpus`
 
 `Generator(corpus, difficulty, mode, seed, station)` owns a
 `random.Random(seed)` instance so a seeded session is reproducible regardless
@@ -337,7 +366,7 @@ of anything else that uses the global `random` module.
   `corpus_from_data()`, could fail here). It is the exact string that is
   synthesised and revealed.
 
-### 4.9 Settings (`build_parser`, `resolve_settings`)
+### 4.9 Settings (`build_parser`, `resolve_settings`): `settings`
 
 Resolution order for every option: command line, then `[defaults]` in
 `config.toml`, then built-in defaults (`BUILTIN_DEFAULTS`). `--farnsworth`
@@ -357,7 +386,7 @@ exits 2.
 `settings_from_argv(argv, defaults)` exposes the same path to tests without
 touching the file system.
 
-### 4.10 Session and UI (`Session`, `UI`)
+### 4.10 Session and UI (`Session`, `UI`): `session`, `terminal`
 
 - The header line is `18 WPM · Farnsworth 15 · Difficulty 3 · Mixed`;
   `Farnsworth` is omitted when it equals the character speed, active band
@@ -414,7 +443,7 @@ touching the file system.
 - Quitting (`q`, Esc, Ctrl-C, Ctrl-D, EOF) always goes through `finally`:
   the player is stopped, the temp file removed, the terminal restored.
 
-### 4.11 Export (`export`)
+### 4.11 Export (`export`): `cli`
 
 `--export FILE.wav` skips the player and the keyboard entirely. It builds the
 same `Generator` and `Transmitter` as a session, renders `--count` phrases
@@ -424,7 +453,7 @@ text goes to `FILE.txt`, one numbered line per phrase, with a blank line
 before each new station. A seeded export gives the same phrases as a seeded
 session.
 
-### 4.12 Rating and history (`RatingModel`, `Rating`, `History`)
+### 4.12 Rating and history (`RatingModel`, `Rating`, `History`): `rating`
 
 - `phrase_rating(model, rec)` is D, a sum of independent terms (README,
   "Your CW RX Elo"). The speed term uses a geometric blend
@@ -461,7 +490,7 @@ session.
   verdict is printed: reading along is not copying). Quitting mid-phrase
   does not rate it.
 
-### 4.13 Stats (`stats_report`, `elo_trend`, `setups_table`, `heatmap`)
+### 4.13 Stats (`stats_report`, `elo_trend`, `setups_table`, `heatmap`): `stats`
 
 `--stats` replays the whole history, keeping the rating at the end of each
 day. From that it prints:
@@ -485,7 +514,7 @@ day. From that it prints:
   grey `░░` instead of `··`. The last line is a legend, the streak and a
   nudge when today has not been played yet.
 
-### 4.14 S-meter (`meter_track`, `meter_bar`)
+### 4.14 S-meter (`meter_track`, `meter_bar`): `meter`
 
 - `Session._play()` is the only way audio is played. It loads the buffer
   and, when the meter is on, computes its `meter_track()` once: per 50 ms
