@@ -15,6 +15,10 @@ HERE = Path(__file__).resolve().parent
 CONFIG = HERE / "config.toml"
 
 
+def synth(text, t, tone_hz, volume, rate=pr.SAMPLE_RATE):
+    return pr.render(text, t, tone_hz, volume, rate)[0]
+
+
 def tiny_corpus(**overrides):
     data = {
         "vocab": {"name": ["HANS", "PETER"], "rig": ["K2", "KX3", "QCX"]},
@@ -205,7 +209,7 @@ class AudioTests(unittest.TestCase):
     def test_sample_count_and_envelope(self):
         t = pr.timing_for(20)
         rate = 8000
-        samples = pr.synthesize("E", t, 650, 0.5, rate)
+        samples = synth("E", t, 650, 0.5, rate)
         expected = int(rate * pr.LEAD_IN_SECONDS) + int(round(t.dit * rate)) + int(rate * pr.TAIL_SECONDS)
         self.assertEqual(len(samples), expected)
         lead = int(rate * pr.LEAD_IN_SECONDS)
@@ -218,7 +222,7 @@ class AudioTests(unittest.TestCase):
         t = pr.timing_for(20)
         rate = 8000
         samples, starts = pr.render("TNX FER CALL", t, 650, 0.5, rate)
-        self.assertEqual(samples, pr.synthesize("TNX FER CALL", t, 650, 0.5, rate))
+        self.assertEqual(samples, synth("TNX FER CALL", t, 650, 0.5, rate))
         self.assertEqual(len(starts), 3)
         self.assertEqual(starts[0], int(rate * pr.LEAD_IN_SECONDS))
         gap = int(round(t.gap_word * rate))
@@ -229,7 +233,7 @@ class AudioTests(unittest.TestCase):
             self.assertFalse(any(samples[s - gap:s]))    # preceded by the word gap
 
     def test_wav_written(self):
-        samples = pr.synthesize("TEST", pr.timing_for(25), 650, 0.3, 8000)
+        samples = synth("TEST", pr.timing_for(25), 650, 0.3, 8000)
         fd, path = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
         try:
@@ -254,7 +258,7 @@ class ConditionsTests(unittest.TestCase):
 
     def test_no_conditions_is_machine_perfect(self):
         self.assertEqual(self.render()[0],
-                         pr.synthesize(self.TEXT, pr.timing_for(20), 650, 0.5, self.RATE))
+                         synth(self.TEXT, pr.timing_for(20), 650, 0.5, self.RATE))
 
     def test_fist_varies_timing_reproducibly(self):
         clean, _ = self.render()
@@ -590,7 +594,7 @@ class PlayerTests(unittest.TestCase):
     def test_silent_player_clock(self):
         p = pr.Player(8000, None, enabled=False)
         self.assertEqual(p.state(), "done")
-        p.load(pr.synthesize("PARIS PARIS PARIS", pr.timing_for(10), 650, 0.5, 8000))
+        p.load(synth("PARIS PARIS PARIS", pr.timing_for(10), 650, 0.5, 8000))
         p.play(0)
         self.assertEqual(p.state(), "playing")
         self.assertTrue(p.pause())
@@ -656,7 +660,7 @@ class PlayerResumeTests(unittest.TestCase):
 class PlayerProcessTests(unittest.TestCase):
     def make_player(self, code):
         player = pr.Player(8000, ("fake", [sys.executable, "-c", code]))
-        player.load(pr.synthesize("E", pr.timing_for(20), 650, 0.5, 8000))
+        player.load(synth("E", pr.timing_for(20), 650, 0.5, 8000))
         self.addCleanup(player.close)
         return player
 
@@ -785,10 +789,10 @@ class SessionTests(unittest.TestCase):
     def test_status_line_does_not_repeat_agn(self):
         s = self.make_session([])
         done = s.status_text(False)
-        self.assertIn("[space] agn", done)
-        self.assertNotIn("[a] agn", done)
+        self.assertIn("space agn", done)
+        self.assertNotIn("  a agn", done)
         s.start("TEST")
-        self.assertIn("[a] agn", s.status_text(False))
+        self.assertIn("  a agn", s.status_text(False))
 
     def test_player_error_is_shown_once(self):
         class BrokenPlayer(pr.Player):
@@ -1026,13 +1030,13 @@ class RatingTests(unittest.TestCase):
         rating = self.rated(1290)
         easy = calm(level=1, words=2, wpm=15, fw=15)
         games = [rating.play(easy) for _ in range(5)]
-        self.assertEqual([g.run for g in games], [1, 2, 3, 4, 5])
+        self.assertTrue(all(g.proper for g in games))
         self.assertEqual(games[0].rank_before, "Pencil copier")
         self.assertEqual(games[-1].rank_after, "Ragchewer")
         self.assertTrue(all(g.new_best for g in games))
         g = rating.play(calm(peek=True))
-        self.assertEqual((g.run, g.new_best), (0, False))
-        self.assertEqual(rating.best_run, 5)
+        self.assertEqual((g.proper, g.new_best), (False, False))
+        self.assertEqual(pr.longest_run([easy] * 5 + [calm(peek=True), easy]), 5)
 
     def test_floor(self):
         rating = self.rated(100)
@@ -1181,7 +1185,7 @@ class RatedSessionTests(unittest.TestCase):
                 return key
 
         self.assertTrue(session.exercise(1, Keys()))
-        self.assertEqual(session.outcomes["agn"], 1)             # pause + resume were free
+        self.assertEqual(session.played[0]["agn"], 1)            # pause + resume were free
 
     def test_read_along_is_off_the_record(self):
         session, out = self.run_session(["--count", "2", "--show-text"], "n\nn\n")
@@ -1367,7 +1371,7 @@ class MeterTests(unittest.TestCase):
         self.assertEqual(pr.meter_bar((False, 5.2), ui), "S5    " + lit * 5 + unlit * 7)
         self.assertEqual(pr.meter_bar((False, 12.4), ui), "S9+20 " + lit * 11 + unlit)
         self.assertEqual(pr.meter_bar((True, 0.5), ui), "TX    " + lit * 6 + unlit * 6)
-        self.assertEqual(pr.meter_bar(None, ui), " " * 6 + unlit * 12)
+        self.assertEqual(pr.meter_bar(None, ui), "S0    " + unlit * 12)
 
     def test_each_station_has_its_own_strength(self):
         tx = pr.Transmitter(pr.settings_from_argv(["--seed", "5"]))

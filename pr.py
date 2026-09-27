@@ -79,23 +79,24 @@ MODES = ("blocks", "phrases", "mixed")
 # own scheme. heat0-4 colour the practice heatmap; meter/over/off the
 # S-meter segments (up to S9, over S9, unlit); tx the meter while you send.
 STYLES = {"good": "1;32", "ok": "33", "bad": "31", "bold": "1", "dim": "2",
-          "up": "32", "down": "31", "heat0": "90", "heat1": "2;32", "heat2": "32",
-          "heat3": "92", "heat4": "1;92", "meter": "32", "over": "91", "off": "90",
+          "label": "90", "value": "1",
+          "up": "32", "down": "31", "heat0": "90", "heat1": "32", "heat2": "32",
+          "heat3": "32", "heat4": "92", "meter": "32", "over": "91", "off": "90",
           "tx": "1;31"}
 SAMPLE_RATE = 16000
 
 KEYS_HELP = """\
 keys during a session:
-  r       Roger: you copied it, next phrase (n and Enter work too)
-  a       AGN?  ask for a repeat, the phrase plays again
-  s       QRS   ask for slower: more space between characters, and the
-          station stays slower, speeding up again as you copy
-  space   pause / resume (AGN? once the phrase has finished)
-  t       reveal / hide the text (a peek scores nothing)
-  + / -   character speed +/- 1 WPM
-  ] / [   Farnsworth effective speed +/- 1 WPM
-  h / ?   show this key list
-  q / Esc quit"""
+  r         Roger: you copied it, next phrase (n and Enter work too)
+  a         AGN?: the phrase again
+  s         QRS: more space between characters; the station stays slower
+            and speeds up again as you copy
+  space     pause / resume (AGN? once the phrase has finished)
+  t         peek: reveal / hide the text (the phrase then scores nothing)
+  + / -     character speed +/- 1 WPM
+  ] / [     Farnsworth effective speed +/- 1 WPM
+  h / ?     show this key list
+  q / Esc   quit"""
 
 
 # ----------------------------------------------------------------------------
@@ -441,11 +442,6 @@ def rx_filter(samples, center_hz: float, bandwidth_hz: float, rate: int = SAMPLE
         out.append(2.0 * (z * phasor.conjugate()).real)  # and back to the pitch
         phasor *= step
     return out
-
-
-def synthesize(text: str, t: Timing, tone_hz: int, volume: float,
-               rate: int = SAMPLE_RATE) -> array.array:
-    return render(text, t, tone_hz, volume, rate)[0]
 
 
 def _silence(n: int) -> array.array:
@@ -1175,12 +1171,9 @@ def copy_result(model: RatingModel, agn: int = 0, qrs: int = 0, peek: bool = Fal
 class Game:
     """One rated phrase."""
     d: float          # the phrase's rating
-    s: float          # your result
-    e: float          # the result Elo expected
     before: float
     after: float
     proper: bool      # a Proper Roger: no AGN, no QRS, no peek
-    run: int          # Proper Rogers in a row, this one included
     new_best: bool
     rank_before: str
     rank_after: str
@@ -1198,8 +1191,6 @@ class Rating:
         self.value = model.start
         self.count = 0
         self.best = None
-        self.run = 0
-        self.best_run = 0
 
     @property
     def provisional(self) -> bool:
@@ -1223,13 +1214,10 @@ class Rating:
         after = max(model.floor, before + k * (s - e))
         self.value = after
         self.count += 1
-        proper = not (agn or qrs or peek)
-        self.run = self.run + 1 if proper else 0
-        self.best_run = max(self.best_run, self.run)
         new_best = (not self.provisional and self.best is not None
                     and round(after) > round(self.best))
         self.best = after if self.best is None else max(self.best, after)
-        return Game(d, s, e, before, after, proper, self.run, new_best,
+        return Game(d, before, after, _proper(rec), new_best,
                     rank_for(model, before)[0], rank_for(model, after)[0])
 
 
@@ -1258,18 +1246,13 @@ class History:
             text = self.path.read_text(encoding="utf-8")
         except FileNotFoundError:
             return self
-        for line in text.splitlines():
-            if not line.strip():
-                continue
+        for line in filter(str.strip, text.splitlines()):
             try:
                 rec = json.loads(line)
-                if not isinstance(rec, dict) or not isinstance(rec.get("t"), str):
+                datetime.fromisoformat(rec["t"])       # a date...
+                if not (rec["wpm"] > 0 and rec.get("fw", 1) > 0):   # ...and speeds
                     raise ValueError
-                datetime.fromisoformat(rec["t"])
-                if not (isinstance(rec.get("wpm"), (int, float)) and rec["wpm"] > 0
-                        and rec.get("fw", 1) > 0):
-                    raise ValueError
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, KeyError):
                 self.skipped += 1
                 continue
             self.records.append(rec)
@@ -1280,6 +1263,11 @@ class History:
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, separators=(",", ":")) + "\n")
         self.records.append(rec)
+
+
+def plural(n: int, word: str) -> str:
+    """``word`` for 1, ``words`` otherwise."""
+    return word if n == 1 else word + "s"
 
 
 def speed_label(wpm, fw) -> str:
@@ -1362,6 +1350,15 @@ def _proper(rec: dict) -> bool:
     return not (rec.get("agn") or rec.get("qrs") or rec.get("peek"))
 
 
+def longest_run(records) -> int:
+    """The most Proper Rogers in a row."""
+    best = run = 0
+    for rec in records:
+        run = run + 1 if _proper(rec) else 0
+        best = max(best, run)
+    return best
+
+
 HEAT_MINUTES = (5, 10, 20)   # a day under 5 min is level 1, then 2, 3, and 4 from 20 min
 
 
@@ -1380,14 +1377,23 @@ def heat_level(minutes: float | None) -> int:
     return 1 + sum(1 for m in HEAT_MINUTES if minutes >= m)
 
 
+def heat_cell(level: int, ui: "UI") -> str:
+    """Two characters for a day. The shade carries the level, so it reads in
+    any colour scheme (16 colours have only two greens); on a colour
+    terminal a day off is a faint square instead of dots."""
+    cell = ui.sym["heat"][level]
+    if level == 0 and ui.color:
+        cell = ui.sym["heat"][1]
+    return ui.paint(cell, f"heat{level}")
+
+
 def heatmap(records, ui: "UI", today: date | None = None, weeks: int = 3) -> list:
     """A practice calendar, one row per week, Monday first: build the habit."""
     today = today or date.today()
     minutes = day_minutes(records)
-    sym = ui.sym
-    solid = ui.color   # coloured blocks, else shades
     first = today - timedelta(days=today.weekday(), weeks=weeks - 1)
-    lines = [f"  {'':6}  " + " ".join(d for d in ("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"))]
+    lines = [f"  {'':6}  " + ui.paint(" ".join(("Mo", "Tu", "We", "Th", "Fr", "Sa", "Su")),
+                                        "label")]
     for week in range(weeks):
         monday = first + timedelta(weeks=week)
         cells = []
@@ -1396,22 +1402,57 @@ def heatmap(records, ui: "UI", today: date | None = None, weeks: int = 3) -> lis
             if day > today:
                 cells.append("  ")
                 continue
-            level = heat_level(minutes.get(day))
-            cell = sym["heat"][level] if not solid or not level else sym["full"] * 2
-            cells.append(ui.paint(cell, f"heat{level}"))
-        lines.append(f"  {monday:%b} {monday.day:>2}  " + " ".join(cells))
-    legend = " ".join(ui.paint(sym["heat"][lvl] if not solid or not lvl else sym["full"] * 2,
-                               f"heat{lvl}") for lvl in range(5))
+            cells.append(heat_cell(heat_level(minutes.get(day)), ui))
+        lines.append("  " + ui.paint(f"{monday:%b} {monday.day:>2}", "label") + "  "
+                     + " ".join(cells))
+    legend = " ".join(heat_cell(level, ui) for level in range(5))
     current, _ = streaks(minutes, today)
     done_today = minutes.get(today)
     if done_today is not None:
-        nudge = f"today {max(1, round(done_today))} min"
+        nudge = ui.field("today", max(1, round(done_today)), "min")
     elif current:
         nudge = ui.paint(f"today: not yet, keep your {current}-day streak alive", "bold")
     else:
-        nudge = "today: not yet"
-    streak = f"streak {current} day{'s' if current != 1 else ''}"
-    lines.append(f"  {'':6}  less {legend} more   {streak} {sym['dot']} {nudge}")
+        nudge = ui.paint("today: not yet", "label")
+    streak = ui.field("streak", current, plural(current, "day"))
+    lines.append(f"  {'':6}  " + ui.paint("less", "label") + f" {legend} "
+                 + ui.paint("more", "label") + "   " + ui.joined([streak, nudge]))
+    return lines
+
+
+def elo_trend(by_day: dict, ui: "UI", today: date) -> list:
+    """Your Elo at the end of each of the last 30 days, one character per
+    day; a day off keeps the day before's value."""
+    start = max(min(by_day), today - timedelta(days=29))
+    value = next((by_day[day] for day in sorted(by_day, reverse=True) if day < start), None)
+    values = []
+    for offset in range((today - start).days + 1):
+        value = by_day.get(start + timedelta(days=offset), value)
+        values.append(value)
+    if len(values) < 2:
+        return []
+    return ["", "  " + ui.paint(f"Elo, last {len(values)} days", "label") + "   "
+            + ui.paint(str(round(min(values))), "label") + " "
+            + ui.paint(sparkline(values, ui.sym["blocks"]), "good") + " "
+            + ui.paint(str(round(max(values))), "label")]
+
+
+def setups_table(records, model: RatingModel, ui: "UI", today: date) -> list:
+    """The setups played in the last 30 days, most played first."""
+    groups = {}
+    for rec in records:
+        if _day(rec) >= today - timedelta(days=29):
+            groups.setdefault(setup_of(rec), []).append(rec)
+    if not groups:
+        return []
+    row = "  {:<14} {:<6} {:<7} {:>7} {:>13} {:>11}".format
+    lines = ["", ui.paint(row("last 30 days", "level", "speed", "phrases", "Proper Roger",
+                              "phrase Elo"), "label")]
+    for (level, wpm, fw), recs in sorted(groups.items(), key=lambda kv: -len(kv[1]))[:6]:
+        rate = sum(1 for r in recs if _proper(r)) / len(recs)
+        avg = sum(phrase_rating(model, r) for r in recs) / len(recs)
+        lines.append(row("", f"d{level}", speed_label(wpm, fw), len(recs),
+                         f"{rate:.0%}", round(avg)))
     return lines
 
 
@@ -1421,7 +1462,7 @@ def stats_report(history: History, model: RatingModel, ui: "UI",
     sym = ui.sym
     today = today or date.today()
     records = history.records
-    lines = ["proper-roger · CW RX rating".replace("·", sym["dot"]), ""]
+    lines = [ui.paint(f"proper-roger {sym['dot']} CW RX rating", "value"), ""]
     if not records:
         return lines + [
             "No phrases on record yet. Play a session: every phrase you Roger",
@@ -1432,18 +1473,19 @@ def stats_report(history: History, model: RatingModel, ui: "UI",
     for rec in records:
         by_day[_day(rec)] = rating.play(rec).after
     rank, following, at = rank_for(model, rating.value)
-    best = f"   best {round(rating.best)}"
-    lines.append(f"  Elo {rating.label()}   {rank}{best}")
+    lines.append("  " + ui.joined([ui.field("Elo", rating.label()), ui.paint(rank, "value"),
+                                   ui.field("best", round(rating.best))]))
     if following:
         floor = max((a for a, _ in model.ranks if a <= rating.value), default=model.ranks[0][0])
         fraction = (rating.value - floor) / (at - floor)
-        lines.append(f"  {rank} {bar(fraction, 24, sym)} {following}"
-                     f"  {math.ceil(at - rating.value)} to go")
+        lines.append(f"  {rank} {ui.paint(bar(fraction, 24, sym), 'good')} {following}   "
+                     + ui.field("", math.ceil(at - rating.value), "to go"))
     else:
         lines.append(f"  {sym['star']} top of the ladder")
     if rating.provisional:
         left = model.provisional - rating.count
-        lines.append(f"  provisional: {left} more phrases before it settles")
+        lines.append("  " + ui.paint(f"provisional: {left} more {plural(left, 'phrase')} "
+                                     "before it settles", "label"))
     lines.append("")
     seconds = sum(r.get("secs", 0) for r in records)
     hours, minutes = divmod(int(seconds // 60), 60)
@@ -1452,42 +1494,22 @@ def stats_report(history: History, model: RatingModel, ui: "UI",
     last50 = records[-50:]
     recent = sum(1 for r in last50 if _proper(r)) / len(last50)
     current, best_streak = streaks(by_day, today)
-    d = sym["dot"]
-    lines.append(f"  {len(records)} phrase{"s" if len(records) != 1 else ""} {d} {on_air} on air {d} "
-                 f"{proper / len(records):.0%} Proper Rogers ({recent:.0%} in the last {len(last50)})")
-    lines.append(f"  streak {current} day{'s' if current != 1 else ''} {d} best {best_streak} "
-                 f"{d} longest run {rating.best_run} Proper Roger{'s' if rating.best_run != 1 else ''} in a row")
-    # One character per day over the last 30, a day off keeps yesterday's value.
-    first = min(by_day)
-    start = max(first, today - timedelta(days=29))
-    values, value = [], None
-    for day in sorted(by_day):
-        if day < start:
-            value = by_day[day]
-    day = start
-    while day <= today:
-        value = by_day.get(day, value)
-        if value is not None:
-            values.append(value)
-        day += timedelta(days=1)
+    run = longest_run(records)
+    count = len(records)
+    lines.append("  " + ui.joined([
+        ui.field("", count, plural(count, "phrase")),
+        ui.field("", on_air, "on air"),
+        ui.field("", f"{proper / count:.0%}",
+                 f"Proper Rogers ({recent:.0%} in the last {len(last50)})")]))
+    lines.append("  " + ui.joined([
+        ui.field("streak", current, plural(current, "day")),
+        ui.field("best", best_streak),
+        ui.field("longest run", run, f"{plural(run, 'Proper Roger')} in a row")]))
     lines += [""] + heatmap(records, ui, today)
-    if len(values) > 1:
-        lines += ["", f"  Elo, last {len(values)} days   {round(min(values))} "
-                      f"{sparkline(values, sym['blocks'])} {round(max(values))}"]
-    # Setups played in the last 30 days.
-    groups = {}
-    for rec in records:
-        if _day(rec) >= today - timedelta(days=29):
-            groups.setdefault(setup_of(rec), []).append(rec)
-    if groups:
-        lines += ["", "  last 30 days   level  speed   phrases  Proper Roger  phrase Elo"]
-        top = sorted(groups.items(), key=lambda kv: -len(kv[1]))[:6]
-        for (level, wpm, fw), recs in top:
-            rate = sum(1 for r in recs if _proper(r)) / len(recs)
-            avg = sum(phrase_rating(model, r) for r in recs) / len(recs)
-            lines.append(f"                 d{level:<4}  {speed_label(wpm, fw):<7} {len(recs):>7}"
-                         f"  {rate:>9.0%}     {round(avg):>6}")
-    lines += ["", f"  next: {next_step(records)}", "", f"history: {history.path}"]
+    lines += elo_trend(by_day, ui, today)
+    lines += setups_table(records, model, ui, today)
+    lines += ["", "  " + ui.paint("next:", "label") + " " + next_step(records), "",
+              ui.paint(f"history: {history.path}", "label")]
     if history.skipped:
         lines.append(f"warning: {history.skipped} unreadable lines skipped")
     return lines
@@ -1732,7 +1754,8 @@ def _symbols(out):
               "full": "#", "empty": ".", "blocks": "_.-~=+*#", "send": "<",
               "heat": ("..", "--", "==", "##", "@@"), "lit": "|", "unlit": "."}
     try:
-        "".join("".join(v) for v in unicode.values()).encode(getattr(out, "encoding", None) or "ascii")
+        encoding = getattr(out, "encoding", None) or "ascii"
+        "".join("".join(v) for v in unicode.values()).encode(encoding)
         return unicode
     except (UnicodeEncodeError, LookupError):
         return ascii_
@@ -1773,6 +1796,22 @@ class UI:
         self.color = self.tty and not os.environ.get("NO_COLOR")
         self.sym = _symbols(self.out)
         self._status_open = False
+
+    def field(self, label: str, value, unit: str = "") -> str:
+        """``label value unit``, the label and unit grey, the value bold:
+        ``field("Farnsworth", 18)``, ``field("", 25, "WPM")``."""
+        return " ".join(part for part in (self.paint(label, "label"),
+                                          self.paint(str(value), "value"),
+                                          self.paint(unit, "label")) if part)
+
+    def joined(self, parts) -> str:
+        """Parts separated by a grey dot."""
+        return self.paint(f" {self.sym['dot']} ", "label").join(parts)
+
+    def keys(self, pairs) -> str:
+        """Key hints: the key bold, what it does grey."""
+        return "  ".join(f"{self.paint(key, 'value')} {self.paint(what, 'label')}"
+                         for key, what in pairs)
 
     def paint(self, text: str, style: str) -> str:
         code = STYLES[style]
@@ -1904,7 +1943,7 @@ def meter_bar(entry, ui) -> str:
     """``S7    ▮▮▮▮▮▮▮▯▯▯▯▯`` for a frame of ``meter_track``; None = idle."""
     sym = ui.sym
     if entry is None:
-        return f"{'':6}" + ui.paint(sym["unlit"] * METER_SEGMENTS, "off")
+        return f"{'S0':<6}" + ui.paint(sym["unlit"] * METER_SEGMENTS, "off")
     is_tx, value = entry
     if is_tx:
         lit = round(value * METER_SEGMENTS)
@@ -1963,9 +2002,8 @@ class Session:
         for rec in history.records if history else ():
             self.rating.play(rec)
         self.opening = self.rating.value
-        self.games: list = []
-        self.outcomes = {"proper": 0, "agn": 0, "qrs": 0, "peek": 0}
-        self.in_a_row = self.best_run = 0   # Proper Rogers in a row, this session
+        self.played: list = []   # this session's phrases, as history records
+        self.in_a_row = 0        # Proper Rogers in a row, this session
         self._save_error = None
         self._session_start = time.monotonic()
         self._begin("")
@@ -1978,55 +2016,54 @@ class Session:
     # -- output -------------------------------------------------------------
 
     def header(self) -> str:
-        dot = f" {self.ui.sym['dot']} "
-        parts = [f"{self.wpm} WPM"]
+        ui, st = self.ui, self.settings
+        parts = [ui.field("", self.wpm, "WPM")]
         if self.qrs_drop:
-            parts.append(f"Farnsworth {self.sent_fw} (QRS, yours is {self.farnsworth})")
+            parts.append(ui.field("Farnsworth", self.sent_fw,
+                                  f"(QRS, yours is {self.farnsworth})"))
         elif self.farnsworth != self.wpm:
-            parts.append(f"Farnsworth {self.farnsworth}")
-        parts += [f"Difficulty {self.settings.difficulty}", self.settings.mode.capitalize()]
-        st = self.settings
+            parts.append(ui.field("Farnsworth", self.farnsworth))
+        parts += [ui.field("Difficulty", st.difficulty), ui.field("", st.mode.capitalize())]
         if st.fist:
-            parts.append(f"fist {st.fist}%")
+            parts.append(ui.field("fist", f"{st.fist}%"))
         if st.vary:
-            parts.append(f"vary {self.ui.sym['pm']}{st.vary}")
+            parts.append(ui.field("vary", f"{ui.sym['pm']}{st.vary}"))
         for name, value in (("QSB", st.qsb), ("noise", st.noise), ("QRM", st.qrm)):
             if value:
-                parts.append(f"{name} {value:g}")
+                parts.append(ui.field(name, f"{value:g}"))
         if st.noise or st.qrm:
-            parts.append(f"filter {st.filter} Hz {st.shape}")
+            parts.append(ui.field("filter", st.filter, f"Hz {st.shape}"))
         if not self.player.enabled:
-            parts.append("no audio")
-        return dot.join(parts)
+            parts.append(ui.paint("no audio", "label"))
+        return ui.joined(parts)
 
     def rating_line(self) -> str:
-        dot = f" {self.ui.sym['dot']} "
+        ui = self.ui
         if not self.rated:
             why = "--show-text" if self.settings.show_text else (
                 "--no-play" if self.settings.no_play else "--no-history")
-            return f"off the record ({why}): not rated"
+            return ui.paint(f"off the record ({why}): not rated", "label")
         rank, following, at = rank_for(self.rating.model, self.rating.value)
-        parts = [self.ui.paint(f"Elo {self.rating.label()}", "bold"), rank]
+        parts = [ui.field("Elo", self.rating.label()), ui.paint(rank, "value")]
         if following:
-            parts.append(f"{math.ceil(at - self.rating.value)} to {following}")
+            parts.append(ui.field("", math.ceil(at - self.rating.value), f"to {following}"))
         count = self.rating.count
-        parts.append(f"{count} phrase{'s' if count != 1 else ''} on record" if count
-                     else "your first rated session")
-        return dot.join(parts)
+        parts.append(ui.field("", count, f"{plural(count, 'phrase')} on record")
+                     if count else ui.paint("your first rated session", "label"))
+        return ui.joined(parts)
 
     def status_text(self, revealed: bool) -> str:
         state = self.player.state()
         sym = self.ui.sym
-        icon = {"playing": f"{sym['play']} playing...", "paused": f"{sym['pause']} paused",
+        icon = {"playing": f"{sym['play']} playing", "paused": f"{sym['pause']} paused",
                 "done": f"{sym['stop']} done"}[state]
-        keys = ["[r] roger"]
-        keys.append({"playing": "[space] pause", "paused": "[space] resume",
-                     "done": "[space] agn"}[state])
+        keys = [("r", "roger"),
+                ("space", {"playing": "pause", "paused": "resume", "done": "agn"}[state])]
         if state != "done":  # when done, space already asks AGN
-            keys.append("[a] agn")
-        keys += ["[s] qrs", "[t] hide" if revealed else "[t] peek", "[q] quit"]
-        elo = f"Elo {self.rating.label()}   " if self.rated else ""
-        text = f"{icon:<14} {elo}" + "  ".join(keys)
+            keys.append(("a", "agn"))
+        keys += [("s", "qrs"), ("t", "hide" if revealed else "peek"), ("q", "quit")]
+        elo = self.ui.field("Elo", self.rating.label()) + "   " if self.rated else ""
+        text = f"{icon:<9}   {elo}" + self.ui.keys(keys)
         if self.meter_on:
             text = self.meter_text() + "  " + text
         return text
@@ -2048,10 +2085,12 @@ class Session:
         self._heard = None      # the easiest way this phrase was heard: a record
         self._started = time.monotonic()
 
-    def start(self, phrase: str) -> None:
-        if phrase != self.phrase:
+    def start(self, phrase: str | None = None) -> None:
+        """Play ``phrase`` as a new one, or the current one again (after a
+        speed change)."""
+        if phrase is not None:
             self._begin(phrase)
-        self._audio = self.tx.render(phrase, self.wpm, self.sent_fw)
+        self._audio = self.tx.render(self.phrase, self.wpm, self.sent_fw)
         self._note_heard()
         self.replay()
 
@@ -2132,7 +2171,7 @@ class Session:
         self.wpm = new
         self.farnsworth = new if self.farnsworth_locked else min(self._fw_wanted, new)
         self.ui.line(self.header())
-        self.start(self.phrase)
+        self.start()
 
     def change_farnsworth(self, delta: int) -> None:
         """[ and ]: from what you hear now; it ends a QRS."""
@@ -2143,35 +2182,29 @@ class Session:
         self.farnsworth = self._fw_wanted = new
         self.farnsworth_locked = new == self.wpm
         self.ui.line(self.header())
-        self.start(self.phrase)
+        self.start()
 
     # -- Roger ----------------------------------------------------------------
 
     def roger(self, revealed: bool) -> Game | None:
         """You copied it (or gave up): score it, save it, say so."""
         ui = self.ui
-        proper = not (self.agn or self.qrs or self.peek)
-        if proper:
-            self.outcomes["proper"] += 1
+        rec = {"t": self._now().isoformat(timespec="seconds"), **self._heard,
+               "agn": self.agn, "qrs": self.qrs, "peek": self.peek,
+               "secs": round(time.monotonic() - self._started, 1), "text": self.phrase}
+        self.played.append(rec)
+        proper = _proper(rec)
         self.in_a_row = self.in_a_row + 1 if proper else 0
-        self.best_run = max(self.best_run, self.in_a_row)
         qrq = None
         if proper and self.qrs_drop:
             self.qrs_drop = max(0, self.qrs_drop - QRQ_STEP_WPM)
             qrq = (f"back to your Farnsworth {self.farnsworth}" if not self.qrs_drop
                    else f"Farnsworth {self.sent_fw}, {self.qrs_drop} to go")
-        self.outcomes["agn"] += self.agn
-        self.outcomes["qrs"] += self.qrs
-        self.outcomes["peek"] += self.peek
         if not revealed:
             ui.line(ui.paint(self.reveal_text(), "dim"))  # check your copy
         game = None
         if self.rated:
-            rec = {"t": self._now().isoformat(timespec="seconds"), **self._heard,
-                   "agn": self.agn, "qrs": self.qrs, "peek": self.peek,
-                   "secs": round(time.monotonic() - self._started, 1), "text": self.phrase}
             game = self.rating.play(rec)
-            self.games.append(game)
             try:
                 self.history.append(rec)
             except OSError as exc:
@@ -2200,8 +2233,9 @@ class Session:
             return label
         delta = f"{game.delta:+d}"
         delta = ui.paint(delta, "up" if game.delta > 0 else "down" if game.delta < 0 else "dim")
-        return (f"{label}   {delta}  {sym['to']} Elo {self.rating.label()}"
-                f"   {ui.paint(f'phrase {round(game.d)}', 'dim')}")
+        return (f"{label}   {delta}  {ui.paint(sym['to'], 'label')} "
+                f"{ui.field('Elo', self.rating.label())}   "
+                f"{ui.paint(f'phrase {round(game.d)}', 'label')}")
 
     def notes(self, game: Game | None) -> list:
         """The crunchy bits: runs, personal bests, ranks."""
@@ -2221,10 +2255,14 @@ class Session:
             out.append(ui.paint(f"  {sym['star']} new best: {round(game.after)}", "good"))
         return out
 
-    def _wait_sidetone(self, keyboard: Keyboard) -> bool:
-        """Let your Roger go out; any key cuts it short. False on quit."""
-        if not self.player.enabled:
+    def send_roger(self, keyboard: Keyboard) -> bool:
+        """Your R R (or R after help) on the sidetone; any key cuts it
+        short. False on quit."""
+        if not (self.settings.sidetone and self.player.enabled):
             return True
+        kind = "roger" if _proper(self.played[-1]) else "ack"
+        side, starts = self.tx.sidetone(self._call(kind), self.wpm)
+        self._play(side, starts, tx_samples=len(side))
         while self.player.state() == "playing":
             if not keyboard.raw:  # line mode: the next line is the next command
                 time.sleep(0.05)
@@ -2238,36 +2276,46 @@ class Session:
 
     def summary(self) -> list:
         """Two lines for the end of a rated session, else nothing."""
-        sym, dot = self.ui.sym, f" {self.ui.sym['dot']} "
-        if not self.games:
+        ui = self.ui
+        if not (self.rated and self.played):
             return []
-        count = len(self.games)
-        proper = self.outcomes["proper"]
+        count = len(self.played)
+        proper = sum(1 for rec in self.played if _proper(rec))
         seconds = time.monotonic() - self._session_start
-        parts = [f"{count} phrase{'s' if count != 1 else ''}",
-                 f"{proper} Proper Roger{'s' if proper != 1 else ''} ({proper / count:.0%})"]
+        parts = [ui.field("", count, plural(count, "phrase")),
+                 ui.field("", proper, f"{plural(proper, 'Proper Roger')} ({proper / count:.0%})")]
         for key, name in (("agn", "AGN"), ("qrs", "QRS"), ("peek", "peek")):
-            n = self.outcomes[key]
+            n = sum(int(rec[key]) for rec in self.played)
             if n:
-                parts.append(f"{n} {name}{'s' if name == 'peek' and n > 1 else ''}")
-        if self.best_run > 1:
-            parts.append(f"best run {self.best_run}")
-        parts.append(f"{max(1, round(seconds / 60))} min")
+                parts.append(ui.field("", n, plural(n, name) if name == "peek" else name))
+        best_run = longest_run(self.played)
+        if best_run > 1:
+            parts.append(ui.field("best run", best_run))
+        parts.append(ui.field("", max(1, round(seconds / 60)), "min"))
         change = round(self.rating.value) - round(self.opening)
         style = "up" if change > 0 else "down" if change < 0 else "dim"
-        elo = (f"Elo {round(self.opening)} {sym['to']} {self.rating.label()} "
-               + self.ui.paint(f"({change:+d})", style)
-               + f"{dot}{rank_for(self.rating.model, self.rating.value)[0]}")
+        elo = [ui.field("Elo", round(self.opening)) + " " + ui.paint(ui.sym["to"], "label") + " "
+               + ui.paint(self.rating.label(), "value") + " " + ui.paint(f"({change:+d})", style),
+               ui.paint(rank_for(self.rating.model, self.rating.value)[0], "value")]
         if self.rating.best is not None:
-            elo += f"{dot}best {round(self.rating.best)}"
-        return [dot.join(parts), elo]
+            elo.append(ui.field("best", round(self.rating.best)))
+        return [ui.joined(parts), ui.joined(elo)]
 
     # -- main loop ----------------------------------------------------------
+
+    def key_help(self) -> list:
+        """KEYS_HELP with the keys bold and what they do grey."""
+        lines = []
+        for line in KEYS_HELP.split("\n")[1:]:
+            key, what = line[:12], line[12:]
+            lines.append(self.ui.paint(key, "value") + self.ui.paint(what, "label")
+                         if key.strip() else line[:12] + self.ui.paint(what, "label"))
+        return lines
 
     def run(self) -> int:
         ui = self.ui
         self._session_start = time.monotonic()
-        ui.line("CW Ragchew RX")
+        ui.line(ui.paint("CW Ragchew RX", "value"))
         ui.line(self.header())
         ui.line(self.rating_line())
         if self.history is not None and self.history.records:
@@ -2275,7 +2323,8 @@ class Session:
             for line in heatmap(self.history.records, ui, self._now().date()):
                 ui.line(line)
         ui.line()
-        ui.line(KEYS_HELP.split("\n", 1)[1])
+        for line in self.key_help():
+            ui.line(line)
         n = 0
         try:
             with Keyboard() as keyboard:
@@ -2289,7 +2338,7 @@ class Session:
             self.player.close()
             ui.line()
             lines = self.summary()
-            ui.line(("73" + f" {ui.sym['dot']} " + lines[0]) if lines else "73")
+            ui.line(ui.joined([ui.paint("73", "value")] + lines[:1]))
             for line in lines[1:]:
                 ui.line(line)
             ui.close()
@@ -2298,16 +2347,15 @@ class Session:
     def exercise(self, number: int, keyboard: Keyboard) -> bool:
         """Run one exercise; return False when the user quits."""
         phrase = self.generator.next()
-        title = f"Exercise {number}"
+        title = self.ui.field("Exercise", number)
         if self.generator.new_station:
             self.tx.new_station()
             if self.settings.station and number > 1:
-                title += f" {self.ui.sym['dot']} new station"
+                title = self.ui.joined([title, self.ui.paint("new station", "label")])
         revealed = self.settings.show_text
         ui = self.ui
         ui.line()
         ui.line(title)
-        self._begin(phrase)
         self.start(phrase)
         if revealed:
             ui.line(self.reveal_text())
@@ -2328,11 +2376,7 @@ class Session:
                 return False
             if key in self.NEXT_KEYS:
                 self.roger(revealed)
-                if self.settings.sidetone and self.player.enabled:
-                    kind = "roger" if not (self.agn or self.qrs or self.peek) else "ack"
-                    side, starts = self.tx.sidetone(self._call(kind), self.wpm)
-                    self._play(side, starts, tx_samples=len(side))
-                return self._wait_sidetone(keyboard)
+                return self.send_roger(keyboard)
             if key == "a":
                 self.ask_agn()
             elif key == "s":
@@ -2356,7 +2400,8 @@ class Session:
             elif key == "[":
                 self.change_farnsworth(-1)
             elif key in ("h", "?"):
-                ui.line(KEYS_HELP.split("\n", 1)[1])
+                for line in self.key_help():
+                    ui.line(line)
             shown = None  # redraw the status line after any handled key
 
 

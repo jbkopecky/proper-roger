@@ -135,7 +135,7 @@ standard unit. `timeline(text, timing)` turns a phrase into a list of
 `(tone_on, seconds)` segments with no leading or trailing silence;
 `duration()` sums it.
 
-### 4.4 Audio synthesis (`render`, `synthesize`)
+### 4.4 Audio synthesis (`render`)
 
 - 16 kHz, 16-bit signed mono, built in an `array('h')`.
 - Every tone segment is a sine at `--tone` Hz with a 5 ms raised-cosine
@@ -146,7 +146,7 @@ standard unit. `timeline(text, timing)` turns a phrase into a list of
 - 300 ms of silence is prepended (system players take a moment to start,
   the first dit must not be clipped) and 200 ms appended.
 - `render()` also returns the sample index where each word starts (its
-  first tone), used by pause/resume; `synthesize()` returns the samples only.
+  first tone), used by pause/resume.
 - `write_wav(path, samples, rate)` writes the file with the `wave` module.
 
 On a 10-second phrase this takes a few milliseconds in pure Python.
@@ -377,7 +377,7 @@ touching the file system.
   character speed is lower, so `-` then `+` from 16/15 gives back 16/15.
   `]`/`[` change the effective speed within `[5, wpm]`; reaching `wpm`
   turns Farnsworth off.
-- The status line hides `[a] agn` once a phrase is done, since space
+- The status line hides `a agn` once a phrase is done, since space
   asks AGN then. On a rated session it ends with `Elo 1412`, and it is
   cut to the terminal width, since a wrapped line can no longer be
   rewritten in place. Verdicts are coloured on a TTY unless `NO_COLOR` is set.
@@ -438,9 +438,10 @@ session.
   A peek is 0.
 - `Rating.play(rec)` is textbook Elo with `k_provisional` for the first
   `provisional` phrases (shown as `1043?`) and a `floor`. It returns a
-  `Game` with D, S, E, before/after, the run of Proper Rogers, whether it is
+  `Game` with D, before/after, whether it was a Proper Roger, whether it is
   a new best (only once settled, so the first session does not spam it), and
-  the ranks before and after.
+  the ranks before and after. Runs of Proper Rogers are counted from the
+  records by `longest_run()`, and live by the session for its milestones.
 - `RatingModel` is a frozen dataclass whose defaults match config.toml's
   `[rating]`. `rating_model_from()` accepts only known fields, checks the
   types and ranges, and sorts `ranks`.
@@ -460,7 +461,7 @@ session.
   verdict is printed: reading along is not copying). Quitting mid-phrase
   does not rate it.
 
-### 4.13 Stats (`stats_report`)
+### 4.13 Stats (`stats_report`, `elo_trend`, `setups_table`, `heatmap`)
 
 `--stats` replays the whole history, keeping the rating at the end of each
 day. From that it prints:
@@ -479,8 +480,9 @@ day. From that it prints:
 - `heatmap()`, also printed when a session with a history starts: three
   calendar weeks, Monday first, ending with the current one (future days
   blank). A day's level comes from its minutes on air (`HEAT_MINUTES`: any,
-  5, 10, 20). On a colour terminal, cells are solid blocks in `heat1`-`heat4`,
-  otherwise shade characters. The last line is a legend, the streak and a
+  5, 10, 20). `heat_cell()` draws it as shade characters `░▒▓█`, since 16
+  colours have only two greens; colour adds the hue, and a day off becomes a
+  grey `░░` instead of `··`. The last line is a legend, the streak and a
   nudge when today has not been played yet.
 
 ### 4.14 S-meter (`meter_track`, `meter_bar`)
@@ -509,6 +511,11 @@ day. From that it prints:
 - Colours come from one `STYLES` table that uses only the 16 standard ANSI
   colours (30-37, 90-97, bold, dim), so the terminal's own scheme decides
   what they look like. `NO_COLOR` or a non-TTY output turns them off.
+- Text is styled through three helpers, so the look stays consistent:
+  `UI.field(label, value, unit)` (label and unit grey, value bold),
+  `UI.joined(parts)` (grey `·` between parts) and `UI.keys(pairs)` (key
+  bold, action grey). `Session.key_help()` applies the same rule to
+  `KEYS_HELP`, which stays plain for `--help`.
 
 ## 5. config.toml reference
 

@@ -24,7 +24,7 @@ Elo 1412 · Ragchewer · 88 to Head copier · 612 phrases on record
           less ·· ░░ ▒▒ ▓▓ ██ more   streak 6 days · today: not yet, keep your 6-day streak alive
 
 Exercise 1
-S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶ playing...   Elo 1412   [r] roger  [space] pause  [a] agn  [s] qrs  [t] peek
+S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶ playing   Elo 1412   r roger  space pause  a agn  s qrs  t peek  q quit
 NAME HR IS STEVE AND QTH IS GRENOBLE
 ✓ PROPER ROGER   +17  → Elo 1429   phrase 1579
   ★ 5 Proper Rogers in a row
@@ -278,7 +278,7 @@ starts with the last three weeks, one square per day, Monday first:
 | `▓▓`   | 10 to 20                |
 | `██`   | 20 or more              |
 
-On a colour terminal the squares are solid blocks in shades of green.
+On a colour terminal they're green, and a day off is a faint grey square.
 Minutes on air count from the start of each phrase to your Roger. Next to
 the calendar is your streak of days in a row. If you haven't played today
 yet, it reminds you to keep the streak alive; the day isn't lost until
@@ -360,10 +360,10 @@ On a terminal, the status line starts with a retro LED S-meter, like the
 bar graphs on small QRP rigs:
 
 ```text
-S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶ playing...
-S3    ▮▮▮▯▯▯▯▯▯▯▯▯  ▶ playing...     between words: the noise floor
-S9+10 ▮▮▮▮▮▮▮▮▮▮▯▯  ▶ playing...     a loud station, over S9 in red
-TX    ▮▮▮▮▮▮▮▮▮▮▮▮  ▶ playing...     you, sending AGN?
+S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶ playing
+S3    ▮▮▮▯▯▯▯▯▯▯▯▯  ▶ playing     between words: the noise floor
+S9+10 ▮▮▮▮▮▮▮▮▮▮▯▯  ▶ playing     a loud station, over S9 in red
+TX    ▮▮▮▮▮▮▮▮▮▮▮▮  ▶ playing     you, sending AGN?
 ```
 
 It reads the audio you actually hear, like a real meter. Each station
@@ -379,7 +379,10 @@ off.
 
 Colours use only the 16 standard terminal colours, so they follow your
 terminal's own colour scheme: light, dark, Solarized, whatever you run.
-Green is good, red is a loss, dim is detail. Set `NO_COLOR=1` for none. They
+The look is quiet on purpose. Names are grey and values bold
+(`Farnsworth` **`18`**), keys are bold with what they do in grey. Green is
+good, red is a loss. In the heatmap, the shade carries the level, so it reads
+even where the terminal has only one green. Set `NO_COLOR=1` for none. They
 are off automatically when the output isn't a terminal.
 
 ## Follow a station
