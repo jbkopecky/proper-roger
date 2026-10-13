@@ -52,7 +52,8 @@ keys = ["name", "qth", "rig", "antenna", "power", "key", "job", "hobby",
 agn = ["AGN?", "PSE AGN"]            # r: a repeat, please
 qrs = ["QRS PSE", "PSE QRS"]         # s: slower, please ("QRS?" would mean
                                      #    "shall I send slower?")
-roger = ["R R", "R FB", "FB"]        # n after a Proper Roger
+roger = ["EN EN", "R FB", "FB"]      # n after a Proper Roger ("EN EN": an R R
+                                     #    keyed a bit too loose, the meme)
 ack = ["R", "OK"]                    # n after an AGN, a QRS or a peek
 
 # --------------------------------------------------------------------------
@@ -102,6 +103,33 @@ ranks = [
   { at = 1700, name = "Brass pounder" },
   { at = 1900, name = "Old timer" },
   { at = 2100, name = "Legend" },
+]
+
+# --------------------------------------------------------------------------
+# The --words drill: flash cards for the ear, no Elo. New words come in
+# this order, most frequent first; then each one comes back rarely if you
+# copied it at first hearing, often if you needed help. Reorder, add or cut
+# freely: your progress (drill.json, next to the history) keeps up.
+# --------------------------------------------------------------------------
+[drill]
+words = [
+  # in every QSO
+  "TU", "73", "R", "UR", "ES", "FB", "DE", "K", "TNX", "RST", "5NN", "599",
+  "NAME", "QTH", "HR", "=", "<KN>", "BK", "<BK>", "OM", "<SK>", "CQ", "?",
+  "GM", "GA", "GE", "AGN", "PSE", "HW", "CPY", "RIG", "ANT", "PWR", "WX",
+  # nearly every QSO
+  "QSL", "GL", "U", "I", "IS", "THE", "SO", "AND", "MY", "ON", "VY", "HI",
+  "OK", "<AR>", "QRZ", "QRS", "QSB", "QRM", "QRP", "QSO", "CUL", "CUAGN",
+  "SIG", "RPRT", "NW", "FER", "SRI", "DR", "MNI", "ABT", "TEMP",
+  # often
+  "QRL", "QRT", "QSY", "QRN", "QRV", "QRX", "WID", "HPE", "BTU", "OP",
+  "YRS", "CONDX", "DX", "BAND", "WKD", "NR", "XYL", "YL", "AGE", "HAM",
+  "CW", "TO", "IN", "AT", "IT", "BUT", "WITH", "ALL", "WAS", "TODAY",
+  "GUD", "GN", "TKS", "POTA", "SOTA", "CFM", "INFO",
+  # now and then
+  "QRQ", "QRO", "QSK", "QRU", "QSP", "QTR", "88", "55", "TEST", "NIL",
+  "CL", "SKED", "TRX", "KEY", "PADDLE", "BUG", "QRPP", "DIPOLE", "EFHW",
+  "RETIRED", "WORK", "WARM", "COLD", "RAIN", "SUNNY", "WINDY",
 ]
 
 # --------------------------------------------------------------------------

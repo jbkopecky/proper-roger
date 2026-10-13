@@ -173,3 +173,23 @@ class StationTests(unittest.TestCase):
         names = {w for p in phrases for w in p if w in self.NAMES}
         self.assertEqual(len(rigs), 1)
         self.assertGreater(len(names), 1)
+
+
+class DrillWordsTests(unittest.TestCase):
+    def test_words_are_normalised(self):
+        corpus = tiny_corpus(drill={"words": ["tu", " 73 ", "<kn>"]})
+        self.assertEqual(corpus.words, ("TU", "73", "<KN>"))
+
+    def test_shipped_words_are_unique(self):
+        words = load_corpus(CONFIG).words
+        self.assertGreater(len(words), 50)
+        self.assertEqual(len(words), len(set(words)))
+
+    def test_bad_drill_is_refused(self):
+        for drill in ({"words": "TU"}, {"words": ["TU", ""]}, {"words": ["T%"]}, {"words": ["TU", "tu"]},
+                      {"list": []}):
+            with self.assertRaises(CorpusError, msg=drill):
+                tiny_corpus(drill=drill)
+
+    def test_no_drill_is_fine(self):
+        self.assertEqual(tiny_corpus().words, ())

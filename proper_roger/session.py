@@ -14,6 +14,7 @@ from .terminal import KEYS_HELP, Keyboard, UI, plural, visible_len
 from .rating import Game, History, Record, rank_for
 from .scoreboard import Attempt, Scoreboard
 from .corpus import Corpus, Generator
+from .drill import WordDrill, WordList
 from .settings import OPTIONS, Settings
 from .transmitter import SIDETONE_GAP_SECONDS, Transmitter
 from .meter import METER_FRAME_SECONDS, METER_LAG_SECONDS, meter_bar, meter_track
@@ -29,12 +30,24 @@ OFF_SPEED_WPM = 2            # show what a --vary station sent when this far off
 BAND = ("fist", "vary", "qsb", "noise", "qrm", "filter")   # filter covers its shape too
 
 
+def phrase_source(corpus: Corpus, settings: Settings, history: History | None = None,
+                  graded: bool = True):
+    """What the station sends: generated phrases, or the --words drill:
+    spaced and kept next to the ``history`` when you grade it, in plain
+    order when nobody does (--export)."""
+    if settings.words and not graded:
+        return WordList(corpus.words)
+    if settings.words:
+        return WordDrill(corpus.words, history and history.path.with_name("drill.json"))
+    return Generator(corpus, settings.difficulty, settings.mode, settings.seed, settings.station)
+
+
 class Session:
     """One practice session: phrases, your requests, your Rogers, your Elo.
 
     With a ``history``, every phrase you Roger with r is rated and saved;
-    without one (--no-history, --no-play), or with --show-text, the session
-    is off the record.
+    without one (--no-history, --no-play), with --show-text or --words, the
+    session is off the record.
     """
 
     QUIT_KEYS = ("q", "esc", "eof", "ctrl-c")
@@ -46,10 +59,10 @@ class Session:
         self.corpus = corpus
         self.player = player
         self.ui = UI(out)
-        self.generator = Generator(corpus, settings.difficulty, settings.mode, settings.seed,
-                                   settings.station)
+        self.generator = phrase_source(corpus, settings, history)
         self.tx = Transmitter(settings, player.rate)
-        self.board = Scoreboard(corpus.rating, history, rated=not settings.show_text)
+        self.board = Scoreboard(corpus.rating, history,
+                                rated=not (settings.show_text or settings.words))
         # Speeds. Farnsworth "off" follows the character speed; "on" keeps its
         # own value. Only [ and ] switch it, so - then + restores the offset.
         self.wpm = settings.wpm
@@ -91,9 +104,12 @@ class Session:
         """``CW Ragchew RX   Elo 1081 · Novice · 20 to Pencil copier``"""
         ui, rating = self.ui, self.rating
         title = ui.paint("CW Ragchew RX", "value") + "   "
+        if self.settings.words:
+            return title + ui.paint("word drill, no Elo", "label")
         if not self.board.rated:
-            why = "--show-text" if self.settings.show_text else (
-                "--no-play" if self.settings.no_play else "--no-history")
+            st = self.settings
+            why = ("--show-text" if st.show_text
+                   else "--no-play" if st.no_play else "--no-history")
             return title + ui.paint(f"off the record ({why})", "label")
         rank, following, at = rank_for(rating.model, rating.value)
         parts = [ui.field("Elo", rating.label()), ui.paint(rank, "value")]
@@ -109,8 +125,9 @@ class Session:
         ui, st = self.ui, self.settings
         speed = f"{self.wpm}" if self.sent_fw == self.wpm else f"{self.wpm}/{self.sent_fw}"
         unit = f"WPM (QRS, yours is {self.farnsworth})" if self.qrs_drop else "WPM"
-        parts = [ui.field("", speed, unit), ui.field("level", st.difficulty)]
-        if st.mode != OPTIONS["mode"].default:
+        parts = [ui.field("", speed, unit), self.drill_text() if st.words
+                 else ui.field("level", st.difficulty)]
+        if st.mode != OPTIONS["mode"].default and not st.words:
             parts.append(ui.paint(st.mode, "value"))
         if not self.player.enabled:
             parts.append(ui.paint("no audio", "label"))
@@ -118,6 +135,15 @@ class Session:
         if visible_len(line) <= HEADER_WIDTH:
             return line
         return ui.joined(parts) + "\n" + self.band_text()
+
+    def drill_text(self) -> str:
+        """``common words · 23/127 seen · 4 due``"""
+        ui, drill = self.ui, self.generator
+        parts = [ui.paint("common words", "value")]
+        if drill.seen:
+            parts.append(ui.field("", f"{drill.seen}/{len(drill.words)}", "seen"))
+            parts.append(ui.field("", drill.due, "due"))
+        return ui.joined(parts)
 
     def band_text(self) -> str:
         """``calm band`` (the defaults), ``clean band`` (--clean), or the
@@ -179,7 +205,7 @@ class Session:
                          if key.strip() else line[:12] + self.ui.paint(what, "label"))
         return lines
 
-    def verdict(self, game: Game | None) -> str:
+    def verdict(self, game: Game | None, back: int | None = None) -> str:
         """``+ Roger after AGN   +16  1097``, the label padded to one column."""
         ui, sym, attempt = self.ui, self.ui.sym, self.attempt
         if attempt.peek:
@@ -191,6 +217,9 @@ class Session:
                     for what, n in (("AGN", attempt.agn), ("QRS", attempt.qrs)) if n]
             label, style = f"{sym['ok']} Roger after {'+'.join(asks)}", "ok"
         text = ui.paint(label, style)
+        if back is not None:          # the --words drill: when the word comes back
+            pad = " " * max(0, VERDICT_WIDTH - len(label))
+            return f"{text}{pad}  {ui.paint(f'again in {back}', 'label')}"
         if game is None:
             return text
         delta = ui.paint(f"{game.delta:+d}".rjust(4),
@@ -198,16 +227,17 @@ class Session:
         pad = " " * max(0, VERDICT_WIDTH - len(label))
         return f"{text}{pad}  {delta}  {ui.paint(self.rating.label(), 'value')}"
 
-    def phrase_line(self, number: int, game: Game | None) -> str:
+    def phrase_line(self, number: int, game: Game | None, back: int | None = None) -> str:
         """`` 1  BK TO U        + Roger after AGN   +16  1097``: the whole
         exercise on one line (two when the phrase is long)."""
         lead = f"{number:>2}  "
         text = self.reveal_text()
         if self.settings.show_text:   # reading along is not copying: no verdict
             return lead + text
+        verdict = self.verdict(game, back)
         if len(text) > PHRASE_WIDTH:
-            return f"{lead}{text}\n{' ' * (len(lead) + PHRASE_WIDTH + 2)}{self.verdict(game)}"
-        return f"{lead}{text:<{PHRASE_WIDTH}}  {self.verdict(game)}"
+            return f"{lead}{text}\n{' ' * (len(lead) + PHRASE_WIDTH + 2)}{verdict}"
+        return f"{lead}{text:<{PHRASE_WIDTH}}  {verdict}"
 
     def notes(self, game: Game | None) -> list:
         """The crunchy bits: runs, personal bests, ranks."""
@@ -232,7 +262,11 @@ class Session:
         """``73 · 5 phrases, 3 Proper Rogers · 7 min · Elo 1081 → 1118 (+37)``"""
         ui, board, rating = self.ui, self.board, self.rating
         parts = [ui.paint("73", "value")]
-        if board.rated and board.played:
+        if self.settings.words and board.played:
+            count, proper = len(board.played), board.proper
+            parts.append(ui.field("", count, plural(count, "word")) + ui.paint(", ", "label")
+                         + ui.field("", proper, "at first hearing"))
+        elif board.rated and board.played:
             count, proper = len(board.played), board.proper
             parts.append(ui.field("", count, plural(count, "phrase")) + ui.paint(", ", "label")
                          + ui.field("", proper, plural(proper, "Proper Roger")))
@@ -364,10 +398,14 @@ class Session:
         ui = self.ui
         rec = self.attempt.record(self._now().isoformat(timespec="seconds"))
         game = self.board.score(rec)
-        error = self.board.take_error()
-        if error:
-            ui.line(f"warning: {error}")
-        ui.line(self.phrase_line(number, game))
+        back = None
+        if self.settings.words and not self.settings.show_text:   # reading along files nothing
+            back = self.generator.grade(rec.proper, rec.peek)
+        for error in (self.board.take_error(),
+                      self.generator.take_error() if self.settings.words else None):
+            if error:
+                ui.line(f"warning: {error}")
+        ui.line(self.phrase_line(number, game, back))
         for note in self.notes(game):
             ui.line(note)
         if rec.proper and self.qrs_drop:
@@ -398,6 +436,7 @@ class Session:
     def run(self) -> int:
         ui = self.ui
         self._session_start = time.monotonic()
+        ui.pin()
         ui.line(self.header())
         history = self.board.history
         if history is not None and history.records:
@@ -414,6 +453,7 @@ class Session:
             pass
         finally:
             self.player.close()
+            ui.release()
             ui.line()
             ui.line(self.summary())
             ui.close()

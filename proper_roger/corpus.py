@@ -29,6 +29,7 @@ class Corpus:
     station_keys: tuple = ()  # placeholders that stay fixed for one station
     sidetone: dict | None = None        # what you send: agn, qrs, roger, ack
     rating: "RatingModel | None" = None  # the Elo weights
+    words: tuple = ()                    # the --words drill, most frequent first
 
     def __post_init__(self):
         if self.sidetone is None:
@@ -81,8 +82,9 @@ def corpus_from_data(data, path=None) -> Corpus:
     station_keys = tuple(k.lower() for k in keys)
     sidetone = _sidetone_calls(_section(data, "sidetone"))
     rating = rating_model_from(_section(data, "rating"))
+    words = _drill_words(_section(data, "drill"))
     corpus = Corpus(vocab, ranges, blocks, phrases, defaults, path, station_keys,
-                    sidetone, rating)
+                    sidetone, rating, words)
     _validate_corpus(corpus)
     return corpus
 
@@ -113,6 +115,25 @@ def _sidetone_calls(section: dict) -> dict:
                                   f"without Morse code: {''.join(bad)!r}")
         calls[key] = values
     return calls
+
+
+def _drill_words(section: dict) -> tuple:
+    for key in section:
+        if key != "words":
+            raise CorpusError(f"drill: unknown entry {key!r} (expected words)")
+    words = section.get("words", [])
+    if not isinstance(words, list) or not all(isinstance(w, str) and w.strip() for w in words):
+        raise CorpusError("drill.words: expected a list of texts")
+    words = tuple(" ".join(w.upper().split()) for w in words)
+    twice = sorted({w for w in words if words.count(w) > 1})
+    if twice:
+        raise CorpusError(f"drill.words: listed twice: {', '.join(twice)}")
+    for word in words:
+        bad = unsupported_chars(word)
+        if bad:
+            raise CorpusError(f"drill.words: {word!r} uses characters "
+                              f"without Morse code: {''.join(bad)!r}")
+    return words
 
 
 def _templates(section: dict, name: str) -> dict:
@@ -256,7 +277,7 @@ class Generator:
 SIDETONE_DEFAULTS = {
     "agn": ("AGN?", "PSE AGN"),     # r: a repeat, please
     "qrs": ("QRS PSE", "PSE QRS"),  # s: slower, please
-    "roger": ("R R", "R FB", "FB"),  # n after a Proper Roger
+    "roger": ("EN EN", "R FB", "FB"),  # n after a Proper Roger: EN EN is a loose R R
     "ack": ("R", "OK"),             # n after an AGN, a QRS or a peek
 }
 

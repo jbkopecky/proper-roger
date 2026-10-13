@@ -49,6 +49,7 @@ config.toml      corpus (vocabulary, ranges, templates, station), CLI defaults,
 tests/           unittest suite, one test_<module>.py per module, plus support.py
                  (python3 -m unittest -v)
 history.jsonl    your rated phrases, outside the repo (see 4.12)
+drill.json       your --words progress, next to the history (see 4.8b)
 README.md        user guide
 DOC.md           this file
 ```
@@ -68,6 +69,7 @@ knowing only what comes before it:
 | `rating`         | `RatingModel`, `Rating`, `Record`, `History`                 | 4.12    |
 | `scoreboard`     | `Attempt` (the phrase on the air), `Scoreboard` (the Elo, this session) | 4.12 |
 | `corpus`         | loading and checking config.toml, `Generator`                | 4.1, 4.7-4.8 |
+| `drill`          | `WordDrill` (`--words`, spaced like flash cards), `WordList` | 4.8b    |
 | `settings`       | argparse, config defaults, `Settings`                        | 4.9     |
 | `transmitter`    | per-station speed, pitch and strength; your sidetone         | 4.4c    |
 | `meter`          | the S-meter                                                  | 4.14    |
@@ -317,6 +319,7 @@ exception.
 [ranges]    placeholder -> [low, high]       (integers, low <= high)
 [blocks]    difficulty "1".."5" -> list of templates
 [phrases]   difficulty "1".."5" -> list of templates
+[drill]     words = the --words list, most frequent first (optional)
 ```
 
 Validation happens once at start-up and fails with a precise message:
@@ -367,6 +370,35 @@ of anything else that uses the global `random` module.
   `corpus_from_data()`, could fail here). It is the exact string that is
   synthesised and revealed.
 
+### 4.8b The word drill (`WordDrill`): `drill`
+
+`--words` swaps the generator for a `WordDrill`, `session.phrase_source()`
+choosing one or the other. It is Leitner boxes with the clock counted in
+words heard, so nothing depends on the date:
+
+```text
+INTERVALS = 2, 5, 12, 30, 80, 200, 500     words before a word in box b comes back
+a new word starts in box 1
+first hearing  box + 1        after AGN/QRS  box 1        peek  box 0
+due = turn + INTERVALS[box]   (turn: words heard, ever)
+```
+
+`next()` sends the most overdue word (ties: the more frequent), else the
+next new word in `[drill] words` order, else the one due soonest, and never
+the word just sent when another exists. `grade(proper, peek)` runs from
+`Session.roger()`, and its interval is shown on the line (`again in 12`).
+
+The state is `{"turn": N, "cards": {"TU": [box, due], ...}}` in
+`drill.json` next to the session's history file, rewritten (temp file and
+`os.replace`) after each word. Without a history (`--no-history`,
+`--no-play`) it lives in memory only. Words cut from the list are dropped
+on load, new ones simply arrive as new. An unreadable file starts afresh and
+a failed save warns once, like the history. The drill stays out of the Elo:
+a single word has no place in the phrase rating.
+
+`--export --words` uses a `WordList` instead (plain order, round again),
+since nobody grades an export.
+
 ### 4.9 Settings (`build_parser`, `resolve_settings`): `settings`
 
 Every option shared by the command line and `config.toml` is one line of
@@ -396,16 +428,17 @@ touching the file system.
 
 ### 4.10 Session and UI (`Session`, `UI`): `session`, `terminal`
 
-The screen is a header, then one line per phrase, then one line to say
-goodbye, with a live status line under the last phrase:
+The screen is a header, a live status line, then one line per phrase,
+and one line to say goodbye:
 
 ```text
 CW Ragchew RX   Elo 1547 · Head copier · 154 to Brass pounder      title_line()
 25/18 WPM · level 3 · calm band                                    setup_line()
 ░░▒▒▒▒░ ▒░▒▒▒▒▒ ░   streak 14 days · keep it alive today           stats.habit_line()
 
- 1  FIRST TIME ON 15M TODAY           ✓ PROPER ROGER    +13  1560  phrase_line()
 S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶  QRS 16  r roger  a agn  s qrs  t peek  ? help   status_text()
+
+ 1  FIRST TIME ON 15M TODAY           ✓ PROPER ROGER    +13  1560  phrase_line()
 
 73 · 5 phrases, 2 Proper Rogers · 1 min · Elo 1547 → 1556 (+9)    summary()
 ```
@@ -430,8 +463,14 @@ S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶  QRS 16  r roger  a agn  s qrs  
 - There is no key list at start-up: the status line carries the quick keys
   and `? help`; `h` or `?` prints `KEYS_HELP`.
 - The status line (`▶`, `⏸` or `■`, then `QRS 15` while a QRS is on, the
-  phrase itself while revealed, and the keys) is rewritten in place with `\r` and `ESC[K` on a TTY, and only when its text
-  changes. Off a TTY each change is printed as a normal line. Symbols fall
+  phrase itself while revealed, and the keys) is rewritten in place on a
+  TTY, and only when its text changes. `UI.pin()` clears the screen and
+  keeps the status line under the header; the lines after it go into a
+  scroll region (`ESC[top;bottom r`) below it, each cut to the width so
+  that a row is a line, and `UI.release()` gives the screen back for the
+  summary. A terminal too short for a log under the status line gets
+  the old layout: the status line rewritten with `\r` and `ESC[K` under
+  the last phrase. Off a TTY each change is printed as a normal line. Symbols fall
   back to ASCII when the output encoding cannot represent them; on Windows
   `os.system("")` enables ANSI processing in the console.
 - `+`/`-` change the character speed by 1 WPM and re-synthesise and replay
@@ -479,7 +518,7 @@ S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶  QRS 16  r roger  a agn  s qrs  
 ### 4.11 Export (`export`): `cli`
 
 `--export FILE.wav` skips the player and the keyboard entirely. It builds the
-same `Generator` and `Transmitter` as a session, renders `--count` phrases
+same phrase source and `Transmitter` as a session, renders `--count` phrases
 (20 by default), and writes each one followed by 3 s of silence straight
 into the WAV with `wave.writeframes`, so memory stays at one phrase. The
 text goes to `FILE.txt`, one numbered line per phrase, with a blank line
@@ -615,7 +654,7 @@ meter = true        # live S-meter on a terminal
 [sidetone]
 agn = ["AGN?", "PSE AGN"]      # every entry must be sendable in Morse
 qrs = ["QRS PSE", "PSE QRS"]
-roger = ["R R", "R FB", "FB"]
+roger = ["EN EN", "R FB", "FB"]
 ack = ["R", "OK"]
 
 [rating]                       # every RatingModel field; see the shipped file

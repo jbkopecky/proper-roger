@@ -96,6 +96,7 @@ on Windows. You can also pass any other command with `--player "cmd"`.
 | to fight the QRM with a narrow filter     | `python3 pr.py -d 4 --noise 0.4 --qrm 0.4 --filter 200 --shape sharp` |
 | 40 phrases for the commute                | `python3 pr.py --export commute.wav --count 40 -d 3`       |
 | read along while a level is still new     | `python3 pr.py -d 5 --show-text`                           |
+| flash cards for the ear: words and Q codes | `python3 pr.py --words`                                    |
 | the same sequence again tomorrow          | `python3 pr.py --seed 42 --count 20`                       |
 | to see how far you've come                | `python3 pr.py --stats`                                    |
 | practice off the record, nothing rated    | `python3 pr.py --no-history`                               |
@@ -123,9 +124,10 @@ terminals. Any key cuts your `R R` short if you're in a hurry.
 On the air you don't press replay. You ask. So here, `a` keys `AGN?` (or
 `PSE AGN`) on your own sidetone. There's a short pause, then the other
 station sends the phrase again. `s` keys `QRS PSE`, and it comes back
-slower (see [QRS and QRQ](#qrs-and-qrq)). When you've got it, `r` keys `R R`,
-`R FB` or `FB` (a plain `R` or `OK` if you needed help), and the next phrase
-starts.
+slower (see [QRS and QRQ](#qrs-and-qrq)). When you've got it, `r` keys `R FB`,
+`FB` or, now and then, the proper Proper Roger: `EN EN`, an R R keyed just
+loose enough to fall apart (`· −·`, not `·−·`). A plain `R` or `OK` if you
+needed help. Then the next phrase starts.
 
 Your sidetone sounds like a sidetone should: a perfect keyer at your
 character speed and on your `--tone`, heard dry. The band goes quiet while
@@ -205,7 +207,8 @@ What that means in practice:
   copied the phrase, not when you'd like to have. The text printed after
   your Roger lets you check.
 - `--show-text` (read-along) and `--no-history` sessions are off the
-  record. So are `--no-play` and `--export`.
+  record. So are `--no-play` and `--export`. The `--words` drill has no Elo
+  either: it keeps its own progress (see below).
 
 ### Ranks
 
@@ -442,6 +445,42 @@ Like the SOFT / SHARP setting on many rigs, `--shape` picks the filter:
 
 Experiment: it is exactly what the filter knobs on your rig do.
 
+## Flash cards for the ear: `--words`
+
+```bash
+python3 pr.py --words            # endless: quit with q, your progress is kept
+python3 pr.py --words -c 30      # 30 words today
+```
+
+One word or Q code at a time, scheduled like flash cards (Anki, Leitner).
+The same keys as always: `a` again, `s` slower, `t` peek, `r` when you have
+it. Then the word comes back:
+
+| you copied it...           | it comes back                        |
+|----------------------------|--------------------------------------|
+| at first hearing           | later, and later each time: 12, 30, 80, 200, 500 words |
+| after an AGN or a QRS      | soon: in 5 words                     |
+| after a peek               | at once: in 2 words                  |
+
+```text
+ 1  TU                                ✓ PROPER ROGER          again in 12
+ 2  73                                ✓ Roger after AGN       again in 5
+ 3  R                                 ✗ peeked                again in 2
+```
+
+New words come in frequency order (`TU`, `73`, `R`, `UR`, `ES`, `FB`...
+down to `QRQ`, `QSK`, `SKED`) whenever nothing is due, so the list grows as
+fast as you learn it. Time counts in words heard, not days: what you know
+waits for you, however long you stay away. The header says where you are
+(`common words · 23/127 seen · 4 due`).
+
+No Elo, no pressure: the drill is not in your rating. Its progress is kept
+in `drill.json` next to your history (nothing is kept with `--no-history`;
+delete the file to start over). Speeds and band conditions still apply
+(`--clean` for a perfect keyer). The list is `[drill] words` in
+`config.toml`: reorder it, add your own, cut what you know. `--export` takes
+`--words` too, in plain frequency order.
+
 ## Listening on the go
 
 ```bash
@@ -461,6 +500,7 @@ and check the transcript afterwards.
 -f, --farnsworth N   effective speed in WPM, <= --wpm (default 18, or --wpm when lower)
 -d, --difficulty N   language difficulty 1-5, independent from speed (default 2)
 -m, --mode MODE      blocks | phrases | mixed (default mixed)
+    --words          common words and Q codes as spaced flash cards, no Elo
     --tone HZ        sidetone / receive pitch (default 600)
     --volume X       0.0-1.0 (default 0.5)
 -c, --count N        stop after N exercises (default: endless)

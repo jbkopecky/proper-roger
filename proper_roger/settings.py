@@ -87,6 +87,7 @@ class Settings:
     meter: bool = True
     history: Path | None = None   # None: off the record, nothing rated
     stats: bool = False
+    words: bool = False   # the common words drill instead of phrases
 
     @property
     def conditions(self) -> Conditions:
@@ -108,6 +109,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="language difficulty, independent from speed (default 2)")
     p.add_argument("-m", "--mode", choices=MODES,
                    help="blocks = short chunks, phrases = longer sentences (default mixed)")
+    p.add_argument("--words", action="store_true",
+                   help="common words and Q codes as spaced flash cards, most frequent "
+                        "first; no Elo, progress kept next to the history")
     p.add_argument("--tone", type=int, metavar="HZ",
                    help="sidetone / receive pitch (default 600)")
     p.add_argument("--volume", type=float, metavar="0-1", help="playback volume (default 0.5)")
@@ -230,7 +234,7 @@ def resolve_settings(args: argparse.Namespace, defaults: dict | None = None) -> 
 
     return Settings(**values, count=args.count, show_text=bool(args.show_text), seed=args.seed,
                     no_play=args.no_play, config=Path(args.config), export=args.export,
-                    stats=args.stats)
+                    stats=args.stats, words=args.words)
 
 
 def settings_from_argv(argv, defaults: dict | None = None) -> Settings:

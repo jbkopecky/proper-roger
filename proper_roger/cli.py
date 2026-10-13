@@ -7,11 +7,11 @@ from .audio import _silence, open_wav, pcm_bytes
 from .player import PLAYER_CANDIDATES, Player, find_player
 from .terminal import UI
 from .rating import History, default_history_path
-from .corpus import Corpus, CorpusError, Generator, load_corpus
+from .corpus import Corpus, CorpusError, load_corpus
 from .settings import CLIError, EXPORT_COUNT, EXPORT_GAP_SECONDS, Settings, build_parser, resolve_settings
 from .transmitter import Transmitter
 from .stats import stats_report
-from .session import Session
+from .session import Session, phrase_source
 
 
 def export(settings: Settings, corpus: Corpus, out=None) -> int:
@@ -21,8 +21,7 @@ def export(settings: Settings, corpus: Corpus, out=None) -> int:
     path = settings.export
     text_path = path.with_suffix(".txt")
     count = settings.count or EXPORT_COUNT
-    generator = Generator(corpus, settings.difficulty, settings.mode, settings.seed,
-                          settings.station)
+    generator = phrase_source(corpus, settings, graded=False)
     tx = Transmitter(settings)
     gap = _silence(int(SAMPLE_RATE * EXPORT_GAP_SECONDS))
     seconds = 0.0
@@ -61,6 +60,8 @@ def main(argv=None) -> int:
     try:
         corpus = load_corpus(args.config)
         settings = resolve_settings(args, corpus.defaults)
+        if settings.words and not corpus.words:
+            raise CLIError(f"--words: no [drill] words in {args.config}")
         if settings.stats:
             return show_stats(settings, corpus)
         if settings.export:

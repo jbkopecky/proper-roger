@@ -1,5 +1,6 @@
 """Tests for proper_roger.session."""
 import io
+import json
 import re
 import sys
 import tempfile
@@ -271,6 +272,29 @@ class RatedSessionTests(unittest.TestCase):
         self.assertIn("off the record (--show-text)", out)
         self.assertFalse(self.path.exists())
         self.assertNotIn("PROPER ROGER", out)
+
+    def test_word_drill_is_off_the_record(self):
+        session, out = self.run_session(["--count", "3", "--words"], "n\na\nn\nn\n")
+        self.assertIn("word drill, no Elo", out)
+        self.assertIn("common words", out)
+        self.assertNotIn("level 2", out)
+        self.assertFalse(self.path.exists())                    # no Elo, no history...
+        words = load_corpus(CONFIG).words
+        rows = [line.split()[1] for line in out.splitlines() if re.match(r"^ \d  ", line)]
+        self.assertEqual(rows, list(words[:3]))                 # most frequent first
+        self.assertIn("again in 12", out)
+        self.assertIn("again in 5", out)                         # after the AGN
+        self.assertIn("3 words, 2 at first hearing", out)
+        drill = json.loads(self.path.with_name("drill.json").read_text())   # ...but the drill
+        self.assertEqual(drill["turn"], 3)
+        self.assertEqual(drill["cards"][words[1]], [1, 2 + 5])
+
+        _, out = self.run_session(["--count", "1", "--words"], "n\n")
+        self.assertIn("3/", out)                                  # the next session goes on
+
+    def test_word_drill_read_along_files_nothing(self):
+        self.run_session(["--count", "2", "--words", "--show-text"], "n\nn\n")
+        self.assertFalse(self.path.with_name("drill.json").exists())
 
     def test_milestones_rank_up_and_best(self):
         h = History(self.path)

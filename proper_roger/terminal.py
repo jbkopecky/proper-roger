@@ -174,7 +174,11 @@ def clip(text: str, width: int) -> str:
 
 class UI:
     """Plain text output with one status line rewritten in place on a TTY,
-    in colour on a TTY unless NO_COLOR is set."""
+    in colour on a TTY unless NO_COLOR is set.
+
+    After ``pin()`` on a TTY, the screen is cleared and the status line
+    stays put under the lines written so far (the header); later lines
+    scroll in a region below it, which ``release()`` gives back."""
 
     def __init__(self, out=None):
         self.out = out or sys.stdout
@@ -185,6 +189,10 @@ class UI:
         self.color = self.tty and not os.environ.get("NO_COLOR")
         self.sym = _symbols(self.out)
         self._status_open = False
+        self._pinned = False
+        self._rows = 0          # rows written since pin(): the header, then the log
+        self._status_row = 0    # 0 until the first status line
+        self._status_col = 1
 
     def field(self, label: str, value, unit: str = "") -> str:
         """``label value unit``, the label and unit grey, the value bold:
@@ -208,25 +216,82 @@ class UI:
             return text
         return f"\033[{code}m{text}\033[0m"
 
+    def pin(self) -> None:
+        """Clear the screen; the status line will stay under what comes next."""
+        if not self.tty:
+            return
+        self.out.write("\033[H\033[2J")
+        self.out.flush()
+        self._pinned, self._rows, self._status_row = True, 0, 0
+
     def line(self, text: str = "") -> None:
+        if self._pinned:
+            self._log(text)
+            return
         if self._status_open:
             self.out.write("\r\033[K")
             self._status_open = False
         self.out.write(text + "\n")
         self.out.flush()
 
+    def _log(self, text: str) -> None:
+        """Pinned: each line on the next free row, the log region scrolling
+        once full. Cut to the width, so that a row is a line."""
+        columns, height = _size()
+        for piece in text.split("\n"):
+            row = self._rows + 1
+            if self._status_row and row > height:
+                self.out.write(f"\033[{height};1H\n\033[K")
+            else:
+                self.out.write(f"\033[{row};1H\033[K")
+            self.out.write(clip(piece, columns - 1))
+            self._rows = min(row, height) if self._status_row else row
+        if self._status_row:   # the cursor back at the end of the status line
+            self.out.write(f"\033[{self._status_row};{self._status_col}H")
+        self.out.flush()
+
     def status(self, text: str) -> None:
-        if self.tty:
-            # A status line that wraps can no longer be rewritten in place.
-            width = shutil.get_terminal_size((100, 24)).columns - 1
-            self.out.write("\r\033[K" + clip(text, width))
-            self._status_open = True
-        else:
+        if not self.tty:
             self.out.write(text + "\n")
+            self.out.flush()
+            return
+        # A status line that wraps can no longer be rewritten in place.
+        columns, height = _size()
+        text = clip(text, columns - 1)
+        if self._pinned and not self._status_row:
+            if self._rows + 3 > height:   # no room for a log under it
+                self.release()
+            else:
+                self._status_row = self._rows + 1
+                self._rows = self._status_row + 1
+                self.out.write(f"\033[{self._status_row + 2};{height}r")
+        if self._pinned:
+            self._status_col = visible_len(text) + 1
+            self.out.write(f"\033[{self._status_row};1H\033[K{text}")
+        else:
+            self.out.write("\r\033[K" + text)
+            self._status_open = True
+        self.out.flush()
+
+    def release(self) -> None:
+        """Back to plain lines: the status line goes, the cursor goes under
+        the log."""
+        if not self._pinned:
+            return
+        self._pinned = False
+        if self._status_row:
+            self.out.write(f"\033[r\033[{self._status_row};1H\033[K")
+            self.out.write(f"\033[{self._rows};1H\n")
         self.out.flush()
 
     def close(self) -> None:
+        self.release()
         if self._status_open:
             self.out.write("\n")
             self._status_open = False
             self.out.flush()
+
+
+def _size():
+    size = shutil.get_terminal_size((100, 24))
+    return size.columns, size.lines
