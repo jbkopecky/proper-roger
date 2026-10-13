@@ -16,21 +16,24 @@ CW Ragchew RX   Elo 1547 · Head copier · 154 to Brass pounder
 25/18 WPM · level 3 · calm band
 ░░▒▒▒▒░ ▒░▒▒▒▒▒ ░   streak 14 days · keep it alive today
 
+S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶  QRS 16  r roger  a agn  s qrs  t peek  ? help
+
  1  FIRST TIME ON 15M TODAY           ✓ PROPER ROGER           +13  1560
  2  NAME FRED FRED = QTH HAMBURG HAMBURG = HW CPY? <KN>
                                       ✓ Roger after AGN         +3  1563
  3  WX COLD TEMP MINUS 1C             ✓ Roger after QRS         -3  1560
  4  UR SIG FB WITH SOME QSB           ✗ peeked                 -13  1547
  5  NAME AGN FRED                     ✓ PROPER ROGER            +9  1556
-S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶  QRS 16  r roger  a agn  s qrs  t peek  ? help
 
 73 · 5 phrases, 2 Proper Rogers · 1 min · Elo 1547 → 1556 (+9)
 ```
 
 Each phrase is one line: you hear it, and when you Roger it, the text
 appears with how you copied it, what it did to your Elo, and your new
-rating. The line at the bottom is live: an S-meter, the keys, and `QRS 16`
-while the station is still slowed down for you.
+rating. The line under the header is live and stays put while the phrases
+scroll below it: an S-meter, the keys, and `QRS 16` while the station is
+still slowed down for you. When you quit, it gives way to the session's
+summary.
 
 
 ## Why it is different
@@ -57,7 +60,7 @@ that. proper-roger does.
   fade, just like on your rig.
 - **Take it on a walk.** Export a session to a WAV file with its transcript
   and listen on your phone.
-- **You talk back.** `r` sends `R R`, `a` sends `AGN?`, `s` sends
+- **You talk back.** `r` sends `R FB`, `a` sends `AGN?`, `s` sends
   `QRS PSE`, all on your own dry sidetone. Then the other station comes back.
 - **A CW RX Elo.** Each phrase has its own rating, from its speed, spacing,
   language level, length and band conditions. It is scored as a game you
@@ -105,7 +108,7 @@ on Windows. You can also pass any other command with `--player "cmd"`.
 
 | key              | you send  | what happens                                                 |
 |------------------|-----------|--------------------------------------------------------------|
-| `r` (`n`, Enter) | `R R`     | **Roger**: you copied it. It is scored, printed, and the next phrase comes |
+| `r` (`n`, Enter) | `R FB`    | **Roger**: you copied it. It is scored, printed, and the next phrase comes |
 | `a`              | `AGN?`    | the phrase again, from the top                               |
 | `s`              | `QRS PSE` | the phrase again with more space, and the station **stays** slower until you Roger |
 | `space`          |           | pause / resume on the current word; once the phrase is over, `AGN?` |
@@ -117,7 +120,7 @@ on Windows. You can also pass any other command with `--player "cmd"`.
 
 The status line always shows the quick keys; press `?` (or `h`) for the full
 list. Keys act at once, with no Enter needed, on macOS, Linux and Windows
-terminals. Any key cuts your `R R` short if you're in a hurry.
+terminals. Any key cuts your Roger short if you're in a hurry.
 
 ## Talk back: AGN?, QRS, R R
 
@@ -472,14 +475,14 @@ New words come in frequency order (`TU`, `73`, `R`, `UR`, `ES`, `FB`...
 down to `QRQ`, `QSK`, `SKED`) whenever nothing is due, so the list grows as
 fast as you learn it. Time counts in words heard, not days: what you know
 waits for you, however long you stay away. The header says where you are
-(`common words · 23/127 seen · 4 due`).
+(`common words · 23/128 seen · 4 due`).
 
 No Elo, no pressure: the drill is not in your rating. Its progress is kept
-in `drill.json` next to your history (nothing is kept with `--no-history`;
-delete the file to start over). Speeds and band conditions still apply
-(`--clean` for a perfect keyer). The list is `[drill] words` in
-`config.toml`: reorder it, add your own, cut what you know. `--export` takes
-`--words` too, in plain frequency order.
+in `drill.json` next to your history (nothing is kept with `--no-history`,
+`--no-play` or `--show-text`; delete the file to start over). Speeds and
+band conditions still apply (`--clean` for a perfect keyer). The list is
+`[drill] words` in `config.toml`: reorder it, add your own, cut what you
+know. `--export` takes `--words` too, in plain frequency order.
 
 ## Listening on the go
 
@@ -555,6 +558,7 @@ plain TOML file you can edit:
   towns, your club's favourite rigs.
 - `[ranges]`: integer ranges such as `temp = [8, 24]` for `{temp}`.
 - `[blocks]` and `[phrases]`: templates for difficulty levels `1` to `5`.
+- `[drill]`: the `--words` list, most frequent first.
 
 Template rules:
 
@@ -607,7 +611,7 @@ Template rules:
 ## Under the hood
 
 ```bash
-python3 -m unittest -v     # 149 tests, a few seconds
+python3 -m unittest -v     # 171 tests, a few seconds
 ```
 
 The code is in `proper_roger/`, one plain module per concern (Morse

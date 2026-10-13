@@ -386,7 +386,10 @@ due = turn + INTERVALS[box]   (turn: words heard, ever)
 `next()` sends the most overdue word (ties: the more frequent), else the
 next new word in `[drill] words` order, else the one due soonest, and never
 the word just sent when another exists. `grade(proper, peek)` runs from
-`Session.roger()`, and its interval is shown on the line (`again in 12`).
+`Session.roger()`, and its interval is shown on the line (`again in 12`),
+except with `--show-text`: reading along files nothing. `[drill] words` with
+a word listed twice is refused at load; a box out of range in `drill.json` is
+clamped.
 
 The state is `{"turn": N, "cards": {"TU": [box, due], ...}}` in
 `drill.json` next to the session's history file, rewritten (temp file and
