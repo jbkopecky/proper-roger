@@ -17,7 +17,8 @@ STYLES = {"good": "1;32", "ok": "33", "bad": "31", "bold": "1", "dim": "2",
 
 KEYS_HELP = """\
 keys during a session:
-  r         Roger: you copied it, next phrase (n and Enter work too)
+  r         Roger: the text comes up to check your copy against, then
+            r if it was all there, x if you missed some (n and Enter work too)
   a         AGN?: the phrase again
   s         QRS: more space between characters; the station stays slower
             and speeds up again as you copy

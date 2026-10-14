@@ -42,6 +42,8 @@ class RatingTests(unittest.TestCase):
         self.assertAlmostEqual(r(agn=1, qrs=1), 0.35)
         self.assertEqual(r(agn=9), 0.0)
         self.assertEqual(r(peek=True), 0.0)
+        self.assertEqual(r(missed=True), 0.0)
+        self.assertEqual(r(agn=1, missed=True), 0.0)
 
     def rated(self, value, count=100):
         rating = Rating(self.model)

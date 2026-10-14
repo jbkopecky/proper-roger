@@ -11,7 +11,7 @@ from pathlib import Path
 # Every phrase is an opponent with its own rating D, from how it was sent:
 # speed, Farnsworth, language level, length and band conditions. You are
 # rated R. How you copied it is the result of the game: 1 for a Proper Roger,
-# less after an AGN or a QRS, 0 after a peek. Then plain Elo:
+# less after an AGN or a QRS, 0 after a peek or a miss. Then plain Elo:
 #
 #     E = 1 / (1 + 10^((D - R) / 400))      R <- R + K (S - E)
 #
@@ -77,14 +77,15 @@ class Record:
     agn: int = 0
     qrs: int = 0
     peek: bool = False
+    missed: bool = False   # you checked it against the text and it was not all there
     secs: float = 0.0
     t: str = ""         # local ISO time with its UTC offset
     text: str = ""
 
     @property
     def proper(self) -> bool:
-        """A Proper Roger: no AGN, no QRS, no peek."""
-        return not (self.agn or self.qrs or self.peek)
+        """A Proper Roger: no AGN, no QRS, no peek, nothing missed."""
+        return not (self.agn or self.qrs or self.peek or self.missed)
 
     @property
     def day(self) -> date:
@@ -140,9 +141,10 @@ def phrase_rating(model: RatingModel, rec: Record) -> float:
             + model.vary * rec.vary)
 
 
-def copy_result(model: RatingModel, agn: int = 0, qrs: int = 0, peek: bool = False) -> float:
-    """S: 1 for a Proper Roger, less for every AGN or QRS, 0 after a peek."""
-    if peek:
+def copy_result(model: RatingModel, agn: int = 0, qrs: int = 0, peek: bool = False,
+                missed: bool = False) -> float:
+    """S: 1 for a Proper Roger, less for every AGN or QRS, 0 after a peek or a miss."""
+    if peek or missed:
         return 0.0
     asks = agn + qrs
     if not asks:
@@ -157,7 +159,7 @@ class Game:
     d: float          # the phrase's rating
     before: float
     after: float
-    proper: bool      # a Proper Roger: no AGN, no QRS, no peek
+    proper: bool      # a Proper Roger: no AGN, no QRS, no peek, nothing missed
     new_best: bool
     rank_before: str
     rank_after: str
@@ -190,7 +192,7 @@ class Rating:
     def play(self, rec: Record) -> Game:
         model = self.model
         d = phrase_rating(model, rec)
-        s = copy_result(model, rec.agn, rec.qrs, rec.peek)
+        s = copy_result(model, rec.agn, rec.qrs, rec.peek, rec.missed)
         e = self.expected(d)
         k = model.k_provisional if self.provisional else model.k
         before = self.value

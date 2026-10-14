@@ -5,7 +5,8 @@
 proper-roger is a tiny command-line trainer that keys endless, realistic
 fragments of conversational Morse: the kind of thing you hear when two
 operators settle in for a chat on 40 m. You listen. If you copied it, you
-send **R R** and the next one comes. If you didn't, you send **AGN?** or
+send **R R**: the text comes up, you check your copy against it, and the
+next one comes. If you didn't, you send **AGN?** or
 **QRS PSE** on your own sidetone and the other station sends it again. Every
 phrase you Roger counts toward your **CW RX Elo**, and a little calendar
 shows you whether you're building the habit.
@@ -28,8 +29,9 @@ S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶  QRS 16  r roger  a agn  s qrs  
 73 · 5 phrases, 2 Proper Rogers · 1 min · Elo 1547 → 1556 (+9)
 ```
 
-Each phrase is one line: you hear it, and when you Roger it, the text
-appears with how you copied it, what it did to your Elo, and your new
+Each phrase is one line: you hear it, you Roger it, the text comes up so
+you can check it against what you copied, and you say whether it was all
+there. Then the line shows how you copied it, what it did to your Elo, and your new
 rating. The line under the header is live and stays put while the phrases
 scroll below it: an S-meter, the keys, and `QRS 16` while the station is
 still slowed down for you. When you quit, it gives way to the session's
@@ -108,7 +110,7 @@ on Windows. You can also pass any other command with `--player "cmd"`.
 
 | key              | you send  | what happens                                                 |
 |------------------|-----------|--------------------------------------------------------------|
-| `r` (`n`, Enter) | `R FB`    | **Roger**: you copied it. It is scored, printed, and the next phrase comes |
+| `r` (`n`, Enter) | `R FB`    | **Roger**: you copied it. The text comes up to check your copy against: `r` again if it was all there, `x` if you missed some. Then it is scored, printed, and the next phrase comes |
 | `a`              | `AGN?`    | the phrase again, from the top                               |
 | `s`              | `QRS PSE` | the phrase again with more space, and the station **stays** slower until you Roger |
 | `space`          |           | pause / resume on the current word; once the phrase is over, `AGN?` |
@@ -131,6 +133,13 @@ slower (see [QRS and QRQ](#qrs-and-qrq)). When you've got it, `r` keys `R FB`,
 `FB` or, now and then, the proper Proper Roger: `EN EN`, an R R keyed just
 loose enough to fall apart (`· −·`, not `·−·`). A plain `R` or `OK` if you
 needed help. Then the next phrase starts.
+
+Your R R goes out once you have checked: the first `r` brings up the text,
+and you compare it with the copy in your head, digit by digit. `r` again if
+it was all there, `x` if a figure or a word was off. A miss scores like a
+peek, and you send nothing. Being honest with yourself is the whole game,
+and now you can be: copy in your head, Roger, check, and in practice
+Roger is `r r`.
 
 Your sidetone sounds like a sidetone should: a perfect keyer at your
 character speed and on your `--tone`, heard dry. The band goes quiet while
@@ -175,6 +184,7 @@ than going from 30 to 35. Level 5 at 30 WPM on a noisy band is above 2100.
 | after `QRS PSE`                           | 0.5, rated at the slower speed |
 | each further `AGN?` or `QRS`              | −0.15                     |
 | after a peek with `t`                     | 0 (a loss)                |
+| and then found you missed some (`x`)      | 0 (a loss)                |
 
 **3. Plain Elo.** How you were expected to do, then your new rating:
 
@@ -193,7 +203,7 @@ From there:
 | as a Proper Roger  | +13  |
 | after one AGN      | +1   |
 | after a QRS (heard at 20/12, D = 1310) | −3   |
-| after a peek       | −11  |
+| after a peek, or `x` | −11  |
 
 What that means in practice:
 
@@ -457,13 +467,13 @@ python3 pr.py --words -c 30      # 30 words today
 
 One word or Q code at a time, scheduled like flash cards (Anki, Leitner).
 The same keys as always: `a` again, `s` slower, `t` peek, `r` when you have
-it. Then the word comes back:
+it, then `r` again or `x` once you have seen it. Then the word comes back:
 
 | you copied it...           | it comes back                        |
 |----------------------------|--------------------------------------|
 | at first hearing           | later, and later each time: 12, 30, 80, 200, 500 words |
 | after an AGN or a QRS      | soon: in 5 words                     |
-| after a peek               | at once: in 2 words                  |
+| after a peek, or `x`       | at once: in 2 words                  |
 
 ```text
  1  TU                                ✓ PROPER ROGER          again in 12
@@ -611,7 +621,7 @@ Template rules:
 ## Under the hood
 
 ```bash
-python3 -m unittest -v     # 171 tests, a few seconds
+python3 -m unittest -v     # 172 tests, a few seconds
 ```
 
 The code is in `proper_roger/`, one plain module per concern (Morse

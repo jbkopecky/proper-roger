@@ -2,7 +2,7 @@
 
 Every word sits in a box. Copied at first hearing, it climbs a box and comes
 back later; copied after an AGN or a QRS, it goes back to box 1 and comes
-back soon; peeked, it goes to box 0 and comes back almost at once. Time is
+back soon; peeked or missed, it goes to box 0 and comes back almost at once. Time is
 counted in words heard, not in days, so a word you know waits for you
 across sessions. New words come in frequency order whenever nothing is due.
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 INTERVALS = (2, 5, 12, 30, 80, 200, 500)   # words heard before a word in box b comes back
 NEW_BOX = 1                                 # a new word starts here: first hearing -> box 2
 HELPED_BOX = 1                              # after an AGN or a QRS
-MISSED_BOX = 0                              # after a peek
+MISSED_BOX = 0                              # after a peek or a miss
 
 
 class WordList:
@@ -118,10 +118,10 @@ class WordDrill:
         self.current = word
         return word
 
-    def grade(self, proper: bool, peek: bool) -> int:
+    def grade(self, proper: bool, missed: bool) -> int:
         """File the word just sent; returns how many words until it comes back."""
         box = self.cards.get(self.current, [NEW_BOX, 0])[0]
-        if peek:
+        if missed:
             box = MISSED_BOX
         elif proper:
             box = min(box + 1, len(INTERVALS) - 1)

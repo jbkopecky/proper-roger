@@ -19,12 +19,13 @@ class Attempt:
     agn: int = 0
     qrs: int = 0
     peek: bool = False
+    missed: bool = False
     heard: Record | None = None
     started: float = field(default_factory=time.monotonic)
 
     @property
     def proper(self) -> bool:
-        return not (self.agn or self.qrs or self.peek)
+        return not (self.agn or self.qrs or self.peek or self.missed)
 
     def hear(self, sent: Record, model: RatingModel) -> None:
         """The phrase was just sent as ``sent``: keep it if it was the easiest yet."""
@@ -34,7 +35,8 @@ class Attempt:
     def record(self, when: str) -> Record:
         """What goes into the history when you Roger it at ``when``."""
         return replace(self.heard, agn=self.agn, qrs=self.qrs, peek=self.peek,
-                       secs=round(time.monotonic() - self.started, 1), t=when, text=self.text)
+                       missed=self.missed, secs=round(time.monotonic() - self.started, 1),
+                       t=when, text=self.text)
 
 
 class Scoreboard:
@@ -84,7 +86,7 @@ class Scoreboard:
         return self.in_a_row if self.in_a_row in RUN_MILESTONES else None
 
     def total(self, what: str) -> int:
-        """This session's ``"agn"``, ``"qrs"`` or ``"peek"`` count."""
+        """This session's ``"agn"``, ``"qrs"``, ``"peek"`` or ``"missed"`` count."""
         return sum(int(getattr(rec, what)) for rec in self.played)
 
     @property

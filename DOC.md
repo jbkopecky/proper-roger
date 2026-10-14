@@ -379,13 +379,13 @@ words heard, so nothing depends on the date:
 ```text
 INTERVALS = 2, 5, 12, 30, 80, 200, 500     words before a word in box b comes back
 a new word starts in box 1
-first hearing  box + 1        after AGN/QRS  box 1        peek  box 0
+first hearing  box + 1        after AGN/QRS  box 1        peek or miss  box 0
 due = turn + INTERVALS[box]   (turn: words heard, ever)
 ```
 
 `next()` sends the most overdue word (ties: the more frequent), else the
 next new word in `[drill] words` order, else the one due soonest, and never
-the word just sent when another exists. `grade(proper, peek)` runs from
+the word just sent when another exists. `grade(proper, missed)` (a peek or an `x`) runs from
 `Session.roger()`, and its interval is shown on the line (`again in 12`),
 except with `--show-text`: reading along files nothing. `[drill] words` with
 a word listed twice is refused at load; a box out of range in `drill.json` is
@@ -503,11 +503,16 @@ S7    ▮▮▮▮▮▮▮▯▯▯▯▯  ▶  QRS 16  r roger  a agn  s qrs  
   work inside it. Because it is one buffer, the "receiver" is naturally
   silent while you send. With `--no-sidetone`, only the phrase is played.
 - Keys go through one table, `Session._keys`, from key to method.
-- `r` (or `n`, Enter) is `roger()`. It asks the `Attempt` for its `Record`,
+- `r` (or `n`, Enter) first sets `checking`: the status line shows the
+  text and only `r all there  x missed some`, so you check your copy before
+  anything is scored. Every other key but quit is ignored until you answer.
+  After a peek, or with `--show-text`, you have seen it already and there is
+  no check. `x` sets `Attempt.missed`.
+- The answer is `roger()`. It asks the `Attempt` for its `Record`,
   hands it to `Scoreboard.score()` (4.12), and writes the phrase line: the
-  text, so you can check your copy, the verdict, then any notes.
+  text, the verdict, then any notes.
   Finally it plays your `roger` call (after a Proper Roger) or `ack` call
-  (otherwise) and waits for it to end. On a TTY any key cuts it short, and
+  (otherwise; nothing after a miss) and waits for it to end. On a TTY any key cuts it short, and
   `q` still quits. In line mode it just waits, since the next line is the
   next command.
 - A phrase is rated at the easiest speeds it was *heard* at:
@@ -539,15 +544,15 @@ session.
   the audio (4.4b).
 - `copy_result()` is S: 1, or `agn` / `qrs` for the first request (a QRS in
   the mix counts as a QRS) minus `extra` for each further one, floored at 0.
-  A peek is 0.
+  A peek or a miss is 0.
 - `Rating.play(rec)` is textbook Elo with `k_provisional` for the first
   `provisional` phrases (shown as `1043?`) and a `floor`. It returns a
   `Game` with D, before/after, whether it was a Proper Roger, whether it is
   a new best (only once settled, so the first session does not spam it), and
   the ranks before and after. Runs of Proper Rogers are counted from the
   records by `longest_run()`, and live by the scoreboard for its milestones.
-- `scoreboard.Attempt` is the phrase on the air: its text, the AGNs, QRSs
-  and peek, the easiest `Record` heard, when it started. `record(when)`
+- `scoreboard.Attempt` is the phrase on the air: its text, the AGNs, QRSs,
+  peek and miss, the easiest `Record` heard, when it started. `record(when)`
   turns it into the history line. `scoreboard.Scoreboard` replays the
   history into a `Rating` at start, then `score(rec)` counts each phrase,
   keeps the run of Proper Rogers, and on the record rates and appends it.
@@ -559,7 +564,7 @@ session.
 - `History` is JSON Lines, one `Record` per line. A `Record` is a frozen
   dataclass holding what is needed to re-rate the phrase (`wpm`, `fw`,
   `level`, `words`, the conditions), how it was copied (`agn`, `qrs`,
-  `peek`, `secs`), the setup chosen (`set_wpm`, `set_fw`, `mode`), a local
+  `peek`, `missed`, `secs`), the setup chosen (`set_wpm`, `set_fw`, `mode`), a local
   ISO timestamp with offset, and the `text`. It never holds a rating. Its
   properties answer the questions the stats ask: `proper`, `day`, `setup`.
   `Record.from_json()` ignores keys it does not know and fills missing ones

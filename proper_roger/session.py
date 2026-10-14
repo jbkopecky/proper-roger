@@ -73,6 +73,7 @@ class Session:
         # The phrase on the air.
         self.attempt = Attempt("")
         self.revealed = settings.show_text
+        self.checking = False   # you Rogered: the text is up, copied all of it or not?
         self._audio = (array.array("h"), [])  # the phrase as the station sends it now
         # Only on a live terminal: off it, every change would print a line.
         self.meter_on = settings.meter and self.ui.tty and player.enabled
@@ -173,12 +174,17 @@ class Session:
         return self.title_line() + "\n" + self.setup_line()
 
     def status_text(self) -> str:
-        """``S7 ▮▮▮▮▮▮▮▯▯▯▯▯  ▶  r roger  a agn  s qrs  t peek  ? help``"""
+        """``S7 ▮▮▮▮▮▮▮▯▯▯▯▯  ▶  r roger  a agn  s qrs  t peek  ? help``, or
+        once you Roger, the text to check your copy against."""
         ui = self.ui
         state = self.player.state()
         parts = [self.meter_text()] if self.meter_on else []
         parts.append({"playing": ui.sym["play"], "paused": ui.sym["pause"],
                       "done": ui.sym["stop"]}[state])
+        if self.checking:
+            parts.append(ui.paint(self.reveal_text(), "value"))
+            parts.append(ui.keys([("r", "all there"), ("x", "missed some")]))
+            return "  ".join(parts)
         if self.qrs_drop:
             parts.append(ui.paint(f"QRS {self.sent_fw}", "ok"))
         if self.revealed:
@@ -210,6 +216,8 @@ class Session:
         ui, sym, attempt = self.ui, self.ui.sym, self.attempt
         if attempt.peek:
             label, style = f"{sym['bad']} peeked", "bad"
+        elif attempt.missed:
+            label, style = f"{sym['bad']} missed some", "bad"
         elif attempt.proper:
             label, style = f"{sym['ok']} PROPER ROGER", "good"
         else:
@@ -400,7 +408,7 @@ class Session:
         game = self.board.score(rec)
         back = None
         if self.settings.words and not self.settings.show_text:   # reading along files nothing
-            back = self.generator.grade(rec.proper, rec.peek)
+            back = self.generator.grade(rec.proper, rec.peek or rec.missed)
         for error in (self.board.take_error(),
                       self.generator.take_error() if self.settings.words else None):
             if error:
@@ -414,8 +422,8 @@ class Session:
 
     def send_roger(self, keyboard: Keyboard) -> bool:
         """Your R R (or R after help) on the sidetone; any key cuts it
-        short. False on quit."""
-        if not (self.settings.sidetone and self.player.enabled):
+        short. Nothing when you missed some. False on quit."""
+        if self.attempt.missed or not (self.settings.sidetone and self.player.enabled):
             return True
         side, starts = self.tx.sidetone(self._call("roger" if self.attempt.proper else "ack"),
                                         self.wpm)
@@ -468,6 +476,7 @@ class Session:
             if self.settings.station and number > 1:
                 ui.line(ui.paint("    new station", "label"))
         self.revealed = self.settings.show_text
+        self.checking = False
         self.start(phrase)
         shown = None
         while True:
@@ -484,9 +493,17 @@ class Session:
                 continue
             if key in self.QUIT_KEYS:
                 return False
-            if key in self.NEXT_KEYS:
+            if key in self.NEXT_KEYS and not (self.checking or self.attempt.peek
+                                                or self.settings.show_text):
+                self.checking = True    # first the text, to check your copy against
+                shown = None
+                continue
+            if key in self.NEXT_KEYS or (self.checking and key == "x"):
+                self.attempt.missed = key == "x"
                 self.roger(number)
                 return self.send_roger(keyboard)
+            if self.checking:           # nothing else until you say how it went
+                continue
             action = self._keys.get(key)
             if action:
                 action()

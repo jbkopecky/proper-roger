@@ -35,7 +35,7 @@ class SessionTests(unittest.TestCase):
 
     def test_count_and_reveal_in_line_mode(self):
         code, out = self.run_session(["--no-play", "--count", "3", "--seed", "42", "-d", "3"],
-                                     "t\nn\nn\nn\n")
+                                     "t\nn\nn\nn\nn\nn\n")
         self.assertEqual(code, 0)
         self.assertIn("CW Ragchew RX", out)
         self.assertIn("\n 3  ", out)
@@ -95,6 +95,17 @@ class SessionTests(unittest.TestCase):
         self.assertIn("t hide", s.status_text())
         self.assertTrue(s.attempt.peek)
 
+    def test_roger_first_shows_the_text_to_check_against(self):
+        s = self.make_session([])
+        s.start("WX COLD TEMP MINUS 1C")
+        s.checking = True
+        status = s.status_text()
+        self.assertIn("WX COLD TEMP MINUS 1C", status)
+        self.assertIn("r all there", status)
+        self.assertIn("x missed some", status)
+        self.assertNotIn("a agn", status)                      # you have seen it: no more help
+        self.assertFalse(s.attempt.peek)                       # checking is not peeking
+
     def test_player_error_is_shown_once(self):
         class BrokenPlayer(Player):
             pending = "boom"
@@ -142,12 +153,12 @@ class SessionTests(unittest.TestCase):
 
     def test_new_station_is_announced(self):
         code, out = self.run_session(["--no-play", "--count", "5", "--seed", "1",
-                                      "--station", "2"], "n\n" * 5)
+                                      "--station", "2"], "n\n" * 10)
         lines = [line for line in out.splitlines() if re.match(r"^ \d  |^    new station", line)]
         announced = [lines[i + 1].split()[0] for i, line in enumerate(lines)
                      if line.strip() == "new station"]
         self.assertEqual(announced, ["3", "5"])
-        _, out = self.run_session(["--no-play", "--count", "3", "--station", "0"], "n\n" * 3)
+        _, out = self.run_session(["--no-play", "--count", "3", "--station", "0"], "n\n" * 6)
         self.assertNotIn("new station", out)
 
     def test_header_and_reveal_show_conditions(self):
@@ -200,36 +211,37 @@ class RatedSessionTests(unittest.TestCase):
         return session, session.ui.out.getvalue()
 
     def test_outcomes_are_recorded(self):
-        _, out = self.run_session(["--count", "4", "-w", "20", "-f", "15"],
-                                  "n\na\nn\ns\na\nn\nt\nn\n")
+        _, out = self.run_session(["--count", "5", "-w", "20", "-f", "15"],
+                                  "n\nn\na\nn\nn\ns\na\nn\nn\nt\nn\nn\nx\n")
         recs = History(self.path).load().records
-        self.assertEqual([(r.agn, r.qrs, r.peek) for r in recs],
-                         [(0, 0, False), (1, 0, False), (1, 1, False), (0, 0, True)])
+        self.assertEqual([(r.agn, r.qrs, r.peek, r.missed) for r in recs],
+                         [(0, 0, False, False), (1, 0, False, False), (1, 1, False, False),
+                          (0, 0, True, False), (0, 0, False, True)])
         self.assertEqual((recs[0].wpm, recs[0].fw, recs[0].level), (20, 15, 2))
         self.assertTrue(all(r.t.startswith("2026-09-27T20:00:00") for r in recs))
         for text in ("PROPER ROGER", "Roger after AGN ", "Roger after AGN+QRS", "peeked",
-                     "Elo 1000", "provisional", "4 phrases, 1 Proper Roger"):
+                     "missed some", "Elo 1000", "provisional", "5 phrases, 1 Proper Roger"):
             self.assertIn(text, out)
         rows = [line for line in out.splitlines() if re.match(r"^ \d  ", line)]
-        self.assertEqual(len(rows), 4)                           # one line a phrase
+        self.assertEqual(len(rows), 5)                           # one line a phrase
         columns = {line.index(line.split("  ")[-1]) for line in rows}
         self.assertEqual(len(columns), 1, rows)                 # the Elo column lines up
         self.assertIn(recs[0].text, out)                     # shown after the Roger
 
     def test_rating_carries_over_between_sessions(self):
-        first, _ = self.run_session(["--count", "3"], "n\nn\nn\n")
-        second, out = self.run_session(["--count", "1"], "n\n")
+        first, _ = self.run_session(["--count", "3"], "n\n" * 6)
+        second, out = self.run_session(["--count", "1"], "n\nn\n")
         self.assertEqual(second.board.opening, first.rating.value)
         self.assertNotIn("provisional" if second.rating.count >= 50 else "zzz", out)
 
     def test_r_is_roger_like_on_the_air(self):
-        self.run_session(["--count", "3"], "r\nn\n\n")          # r, n and Enter
+        self.run_session(["--count", "3"], "r\nr\nn\nn\n\n\n")    # r r, n n and Enter Enter
         recs = History(self.path).load().records
         self.assertEqual([(r.agn, r.peek) for r in recs], [(0, False)] * 3)
 
     def test_qrs_then_qrq_one_proper_roger_at_a_time(self):
         _, out = self.run_session(["--count", "6", "-w", "25", "-f", "18"],
-                                  "s\nr\nr\na\nr\nr\nr\nr\n")
+                                  "s\nr\nr\nr\nr\na\n" + "r\nr\n" * 4)
         recs = History(self.path).load().records
         self.assertEqual([r.fw for r in recs], [15, 15, 16, 16, 17, 18])
         self.assertEqual({r.set_fw for r in recs}, {18})
@@ -238,11 +250,13 @@ class RatedSessionTests(unittest.TestCase):
         self.assertNotIn("QRS 18", out)                         # and gone once back to yours
 
     def test_quitting_does_not_rate_the_phrase(self):
-        self.run_session([], "n\nq\n")
+        self.run_session([], "n\nn\nq\n")
+        self.assertEqual(len(History(self.path).load().records), 1)
+        self.run_session([], "n\nq\n")                         # quit while checking
         self.assertEqual(len(History(self.path).load().records), 1)
 
     def test_turning_the_speed_down_rates_the_slowest(self):
-        self.run_session(["--count", "1", "-w", "20"], "-\n-\n+\nn\n")
+        self.run_session(["--count", "1", "-w", "20"], "-\n-\n+\nn\nn\n")
         rec = History(self.path).load().records[0]
         self.assertEqual((rec.wpm, rec.fw), (18, 18))
         self.assertEqual((rec.agn, rec.qrs), (0, 0))       # tuning is free
@@ -255,7 +269,7 @@ class RatedSessionTests(unittest.TestCase):
 
         class Keys:
             raw = False
-            script = iter(["space", "space", "done", "space", "n"])
+            script = iter(["space", "space", "done", "space", "n", "n"])
 
             def read_key(self, timeout):
                 key = next(self.script)
@@ -274,7 +288,7 @@ class RatedSessionTests(unittest.TestCase):
         self.assertNotIn("PROPER ROGER", out)
 
     def test_word_drill_is_off_the_record(self):
-        session, out = self.run_session(["--count", "3", "--words"], "n\na\nn\nn\n")
+        session, out = self.run_session(["--count", "3", "--words"], "n\nn\na\nn\nn\nn\nn\n")
         self.assertIn("word drill, no Elo", out)
         self.assertIn("common words", out)
         self.assertNotIn("level 2", out)
@@ -289,7 +303,9 @@ class RatedSessionTests(unittest.TestCase):
         self.assertEqual(drill["turn"], 3)
         self.assertEqual(drill["cards"][words[1]], [1, 2 + 5])
 
-        _, out = self.run_session(["--count", "1", "--words"], "n\n")
+        _, out = self.run_session(["--count", "1", "--words"], "n\nx\n")
+        self.assertIn("missed some", out)
+        self.assertIn("again in 2", out)                          # a miss comes back at once
         self.assertIn("3/", out)                                  # the next session goes on
 
     def test_word_drill_read_along_files_nothing(self):
@@ -303,7 +319,7 @@ class RatedSessionTests(unittest.TestCase):
         rating = Rating(RatingModel())
         for rec in h.records:
             rating.play(rec)
-        session, out = self.run_session(["--count", "10", "-d", "5", "-w", "30"], "n\n" * 10)
+        session, out = self.run_session(["--count", "10", "-d", "5", "-w", "30"], "n\n" * 20)
         self.assertIn("5 Proper Rogers in a row", out)
         self.assertIn("10 Proper Rogers in a row", out)
         self.assertIn("RANK UP", out)
@@ -313,7 +329,7 @@ class RatedSessionTests(unittest.TestCase):
     def test_save_error_is_a_warning_not_a_crash(self):
         blocker = Path(self.dir.name) / "file"
         blocker.write_text("")                                   # not a directory
-        _, out = self.run_session(["--count", "2"], "n\nn\n", save_to=blocker / "h.jsonl")
+        _, out = self.run_session(["--count", "2"], "n\n" * 4, save_to=blocker / "h.jsonl")
         self.assertEqual(out.count("warning: cannot save"), 1)
         self.assertIn("73", out)
 
